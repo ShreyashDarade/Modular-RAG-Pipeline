@@ -1,4 +1,4 @@
-#RAG Pipeline
+# RAG Pipeline
 
 RAG is a retrieval-augmented generation stack that ingests PDFs and images, stores multi-modal embeddings in Elasticsearch, expands user queries, and streams grounded answers through Ollama-hosted large language models. The project exposes both a FastAPI service and a Typer-powered CLI so you can automate ingestion or run question-answering locally.
 
