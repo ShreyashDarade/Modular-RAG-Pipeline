@@ -52,7 +52,7 @@
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/yourusername/RAG-OCR-Pipeline.git
+git clone https://github.com/ShreyashDarade/RAG-OCR-Pipeline.git
 cd RAG-OCR-Pipeline
 ```
 
