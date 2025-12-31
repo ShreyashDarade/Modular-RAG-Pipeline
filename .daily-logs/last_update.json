@@ -1,6 +1,6 @@
 {
-  "last_updated": "2025-12-30 13:06:18 IST",
-  "run_number": "1",
-  "triggered_by": "workflow_dispatch",
-  "repository": "ShreyashDarade/RAG-OCR-Pipeline"
+  "last_updated": "2025-12-31 08:00:05 IST",
+  "run_number": "2",
+  "triggered_by": "schedule",
+  "repository": "ShreyashDarade/Modular-RAG-Pipeline"
 }
