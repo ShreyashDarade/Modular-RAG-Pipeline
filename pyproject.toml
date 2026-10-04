@@ -1,20 +1,111 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=80"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "turinton-rag"
-version = "0.1.0"
-description = "RAG pipeline with OCR ingestion and LangChain 0.3"
+version = "2.0.0"
+description = "Modular, horizontally scalable RAG: multi-format ingestion with OCR, selective multi-collection hybrid retrieval, multi-model chat, MCP server"
 readme = "README.md"
-requires-python = ">=3.10"
-license = {text = "MIT"}
+requires-python = ">=3.12"
+license = "MPL-2.0"
+license-files = ["LICENSE"]
 authors = [{name = "Turinton AI", email = "support@turinton.ai"}]
-keywords = ["rag", "langchain", "elastic", "ocr", "openai"]
+keywords = ["rag", "ocr", "elasticsearch", "openai", "mcp", "fastapi", "multilingual"]
+
+# Core: everything the retrieval / chat path needs. Deliberately free of OCR, PDF and
+# torch so that API replicas stay small and start fast.
+dependencies = [
+    "pydantic>=2.13",
+    "pydantic-settings>=2.15",
+    "langchain-core>=1.6",
+    "langchain-text-splitters>=1.1",
+    "langchain-openai>=1.6",
+    "elasticsearch[async]>=9.5,<10",
+    "redis[hiredis]>=8.1",
+    "prometheus-client>=0.26",
+    "langdetect>=1.0.9",
+]
 
 [project.optional-dependencies]
-cli = ["typer>=0.9"]
-api = ["fastapi>=0.110", "uvicorn[standard]>=0.23", "python-multipart>=0.0.6"]
+# HTTP API replica (stateless; no OCR stack).
+api = [
+    "fastapi>=0.142",
+    "uvicorn[standard]>=0.54",
+    "python-multipart>=0.0.32",
+]
+# Ingestion worker: parsers, OCR, keyword extraction, file watching.
+worker = [
+    "pymupdf>=1.28",
+    "pandas>=3.0",
+    "tabulate>=0.10",
+    "pillow>=12.3",
+    "numpy>=2.5",
+    "opencv-python-headless>=5.0",
+    "scikit-learn>=1.9",
+    "easyocr>=1.7.2",
+    "torch>=2.14",
+    "watchdog>=6.0",
+]
+# Additional document types (each parser reports a clear error if its extra is missing).
+docx = ["python-docx>=1.2"]
+xlsx = ["openpyxl>=3.1"]
+# Additional chat / embedding providers (OpenAI and Azure OpenAI are built in).
+anthropic = ["langchain-anthropic>=1.7"]
+google = ["langchain-google-genai>=4.4"]
+ollama = ["langchain-ollama>=1.1"]
+# Model Context Protocol server.
+mcp = ["mcp>=2.3"]
+cli = ["typer>=0.27"]
+all = [
+    "turinton-rag[api,worker,docx,xlsx,anthropic,google,ollama,mcp,cli]",
+]
+dev = [
+    "pytest>=9.1",
+    "pytest-asyncio>=1.4",
+    "httpx>=0.28",
+    "fakeredis>=2.39",
+    "ruff>=0.16",
+    "mypy>=2.4",
+]
+
+[project.scripts]
+rag = "src.cli.app:app"
+rag-api = "src.api.main:run"
+rag-worker = "src.worker:main"
+rag-mcp = "src.mcp_server.main:main"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+include = ["src*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+    "integration: needs a live Elasticsearch (see tests/conftest.py for the URLs)",
+    "needs_redis: additionally needs a live Redis",
+    "ocr: needs EasyOCR model weights (downloaded on first use)",
+]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "ASYNC", "RUF"]
+ignore = ["E501", "B008", "RUF012"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B", "SIM", "RUF", "ASYNC"]
+# Carried over unchanged; the Devanagari digit in the correction table is intentional.
+"src/parsing/ocr/cleanup.py" = ["RUF001", "SIM108", "SIM114"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+warn_unused_ignores = true
+check_untyped_defs = true

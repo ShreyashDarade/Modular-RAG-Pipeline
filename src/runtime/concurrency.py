@@ -1,0 +1,67 @@
+"""Small asyncio primitives for staying healthy under load."""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Awaitable, Callable, Iterable
+from typing import Any
+
+
+class Bulkhead:
+    """Bounds concurrent calls to one dependency. Excess callers wait their turn rather than
+    stampeding the dependency (and timing each other out)."""
+
+    def __init__(self, limit: int, name: str = "") -> None:
+        self.name = name
+        self.limit = limit
+        self._semaphore = asyncio.Semaphore(limit)
+
+    async def __aenter__(self) -> None:
+        await self._semaphore.acquire()
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        self._semaphore.release()
+
+    @property
+    def in_flight(self) -> int:
+        return self.limit - self._semaphore._value
+
+
+class SingleFlight:
+    """Collapse concurrent identical work into one execution (cache-stampede protection).
+
+    The first caller for a key runs ``factory``; everyone arriving while it runs awaits the same
+    result. The work is shielded: a cancelled caller (e.g. a client disconnect) does not abort
+    it for the others.
+    """
+
+    def __init__(self) -> None:
+        self._inflight: dict[str, asyncio.Task[Any]] = {}
+
+    async def do[T](self, key: str, factory: Callable[[], Awaitable[T]]) -> T:
+        task = self._inflight.get(key)
+        if task is None:
+            task = asyncio.ensure_future(factory())
+            self._inflight[key] = task
+
+            def forget(_done: asyncio.Future[Any], key: str = key) -> None:
+                self._inflight.pop(key, None)
+
+            task.add_done_callback(forget)
+        return await asyncio.shield(task)
+
+
+async def run_all[T](coroutines: Iterable[Awaitable[T]]) -> list[T]:
+    """Run concurrently and return results in order. On the first failure the remaining work is
+    cancelled and *that* exception is raised as-is (a bare ``TaskGroup`` would wrap it in an
+    ``ExceptionGroup``, hiding the typed errors callers switch on)."""
+    try:
+        async with asyncio.TaskGroup() as group:
+            tasks = [group.create_task(_await(c)) for c in coroutines]
+    except ExceptionGroup as group_error:
+        raise group_error.exceptions[0] from None
+    return [task.result() for task in tasks]
+
+
+async def _await[T](awaitable: Awaitable[T]) -> T:
+    return await awaitable

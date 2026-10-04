@@ -1,341 +1,347 @@
-# 🚀 RAG-OCR Pipeline
+# Modular RAG Pipeline
 
-**Retrieval-Augmented Generation (RAG)** pipeline with **multilingual OCR** support for **Hindi, Marathi, and English**.
+Retrieval-Augmented Generation with **multilingual OCR** (English, Hindi, Marathi), built to be
+**modular** (every moving part sits behind a small interface and is chosen by name) and
+**horizontally scalable** (stateless API replicas, a separate ingestion-worker tier, shared
+Elasticsearch and Redis).
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-green.svg)](https://fastapi.tiangolo.com/)
-[![OpenAI](https://img.shields.io/badge/OpenAI-GPT--4o-purple.svg)](https://openai.com/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.142-green.svg)](https://fastapi.tiangolo.com/)
+[![Elasticsearch 9](https://img.shields.io/badge/Elasticsearch-9.x-yellow.svg)](https://www.elastic.co/)
+[![MCP](https://img.shields.io/badge/MCP-server-purple.svg)](https://modelcontextprotocol.io/)
 
----
+## What it does
 
-## ✨ Features
+| | |
+|---|---|
+| **Many file types** | PDF (text, tables, embedded images), images and multi-page TIFF (OCR), text/Markdown, HTML, CSV/TSV, DOCX, XLSX — one parser per type, add more with a plug-in |
+| **Collections** | Independent corpora, each with its own embedding model, chunker, accepted file types and indices. Ingest into, and search across, any selection of them |
+| **Selective indexing** | Per request choose collections, content *kinds* (`text`, `table`, `image`) and even individual documents. Skipping `image` skips OCR entirely |
+| **Hybrid retrieval** | BM25 + vector search fused with Reciprocal Rank Fusion, cross-reference expansion (same-page / adjacent-page chunks), re-ranking, diversity |
+| **Multiple models** | Named chat and embedding profiles: OpenAI, Azure OpenAI, Anthropic, Google, Ollama (or your own). Pick the chat model per request |
+| **Chat** | Multi-turn conversations with question condensing, per-turn model choice, server-sent-event streaming, Redis-backed history |
+| **MCP server** | `search_documents`, `ask_question`, `list_*` tools over stateless Streamable HTTP or stdio — connect Claude Desktop, IDE agents, … |
+| **Scales out** | Stateless API replicas, Redis-Streams job queue with crash recovery, shared cache / rate limits / conversations, load shedding, Prometheus metrics |
 
-### 🔍 **Advanced OCR**
-
-- **Multilingual Support**: Hindi (हिंदी), Marathi (मराठी), English
-- **GPU Acceleration**: Auto-detects CUDA for faster processing
-- **Image Preprocessing**: Deskewing, denoising, contrast enhancement
-- **NLP Post-processing**: Script-aware text cleaning
-
-### 📄 **Document Intelligence**
-
-- **PDF Processing**: Text, tables, and embedded images
-- **Table Extraction**: Preserves structure as Markdown
-- **Cross-References**: Links text ↔ tables ↔ images on same page
-
-### 🔎 **Hybrid Retrieval**
-
-- **BM25 + Vector Search**: Reciprocal Rank Fusion (RRF)
-- **Re-Ranking**: Multi-signal relevance scoring
-- **Cross-Reference Expansion**: Fetches related chunks automatically
-- **Diversity Selection**: Ensures varied results
-
-### 🤖 **OpenAI Integration**
-
-- **LLM**: GPT-4o-mini for Q&A
-- **Embeddings**: text-embedding-3-small (1536 dimensions)
-- **Context-Aware Answers**: Cites sources with page numbers
+> **No silent fallbacks.** A failed dependency, an unknown model name, a missing optional package or
+> an unsupported OCR language is an *error*, reported with a typed code — never quietly replaced
+> by a default or a degraded answer. Optional behaviour (query expansion, re-ranking, OCR, a cache
+> backend) is switched on or off in configuration, explicitly.
 
 ---
 
-## 📋 Prerequisites
+## Architecture
 
-- **Python 3.10+**
-- **Elasticsearch 8.x**
-- **OpenAI API Key** ([Get one here](https://platform.openai.com/api-keys))
-- **CUDA GPU** (optional, for faster OCR)
+```
+            clients ──► load balancer ──► API replicas (stateless, small image: no OCR / torch)
+                                              │  REST · SSE chat · MCP · /metrics
+         ┌────────────────────────────────────┼──────────────────────────────┐
+         ▼                                    ▼                              ▼
+  Elasticsearch                      Redis                          Ingestion workers (N)
+  chunk indices per collection       job queue (Streams) ·          parse → chunk → OCR →
+  + ingestion ledger                 cache · rate limits ·          embed → bulk index
+                                     conversations · locks          (GPU/CPU, scale independently)
+```
+
+Code is organised as **ports and adapters**. Orchestrators depend only on the small protocols in
+`src/ports/`; `src/core/container.py` is the one place that picks concrete classes.
+
+```
+src/
+  ports/        Embedder · ChatModel · Parser · OcrEngine · Chunker · IndexWriter · Searcher ·
+                DocumentRegistry · QueryExpander · Reranker · Cache · RateLimiter ·
+                ConversationStore · JobBackend           (interfaces only)
+  core/         config (env) · specs (models + collections) · errors · registry · container
+  models/       provider factories (openai, azure_openai, anthropic, google, ollama) + adapters
+  parsing/      pdf · image · text · html · csv/xlsx · docx   +   ocr/ (EasyOCR, deskew)
+  chunking/     recursive chunker · TF-IDF keywords · content-addressed chunk ids
+  indexing/     Elasticsearch adapter (writer, searcher, ledger) · mappings
+  retrieval/    hybrid retriever · query expanders · rerankers · cached pipeline
+  ingestion/    ingestion service · document service · safe file storage · directory watcher
+  jobs/         in-process queue · Redis Streams queue (workers, take-over, locks)
+  chat/         answer service · chat service · conversation stores
+  runtime/      caches · rate limiters · bulkhead / single-flight · Prometheus metrics
+  api/ cli/ mcp_server/ worker.py                        (entry points)
+```
+
+How that maps to SOLID, concretely:
+
+* **Single responsibility** – one class per file type, per provider, per backend; the ingestion
+  service orchestrates, it does not parse, embed or talk to Elasticsearch itself.
+* **Open/closed** – parsers, providers, chunkers, rerankers, caches, queues are looked up by name
+  in registries. Adding one never edits an existing module (see [Extending](#extending)).
+* **Liskov** – each port has one contract test suite that runs against *every* implementation
+  (`tests/integration/test_contracts.py`, `test_jobs.py`).
+* **Interface segregation** – writers, searchers and the ingestion ledger are separate ports; so
+  are embedders and chat models. A read-only API replica needs none of the write side.
+* **Dependency inversion** – no module-level singletons; constructors receive their collaborators.
+  Tests swap in fakes (an in-memory `Searcher`, a hash-based `Embedder`) without patching.
 
 ---
 
-## ⚡ Quick Start
+## Quick start
 
-### 1. Clone the Repository
+### Docker Compose (Elasticsearch + Redis + API replicas + worker)
 
 ```bash
-git clone https://github.com/ShreyashDarade/RAG-OCR-Pipeline.git
-cd RAG-OCR-Pipeline
+cp .env.example .env            # set OPENAI_API_KEY (the compose file supplies ES and Redis)
+docker compose up --build
+docker compose up --scale api=3 --scale worker=2      # scale out: replicas share only ES + Redis
 ```
 
-### 2. Create Virtual Environment
+### Local development
 
 ```bash
-# Windows
-python -m venv venv
-venv\Scripts\activate
-
-# Linux/Mac
-python -m venv venv
-source venv/bin/activate
+python -m venv .venv && source .venv/bin/activate       # Python 3.12+
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu    # or a CUDA index
+pip install -e ".[all,dev]"                              # or: pip install -r requirements-dev.txt
+cp .env.example .env                                     # ES_CLOUD_ID / ES_HOST, OPENAI_API_KEY
+rag-api                                                  # http://localhost:8000/docs
 ```
 
-### 3. Install Dependencies
+Install only what a process needs:
+
+| Image / process | Install | Contains |
+|---|---|---|
+| API replica | `pip install ".[api,mcp]"` | FastAPI, retrieval, chat, MCP — **~150 MB, no OCR / torch** |
+| Ingestion worker | `pip install ".[worker,docx,xlsx]"` | PyMuPDF, OCR, parsers, keyword extraction |
+| Everything | `pip install ".[all]"` | the above + CLI + all providers |
+
+Optional provider extras: `anthropic`, `google`, `ollama`. `requirements.txt` is a fully pinned,
+universal lock of the tested versions.
+
+---
+
+## Configuration
+
+Two layers:
+
+1. **Environment / `.env`** – infrastructure and limits: Elasticsearch, Redis, credentials,
+   concurrency, timeouts. Every variable is documented in [`.env.example`](.env.example).
+2. **`RAG_CONFIG` (TOML)** – *what the system is made of*: named chat models, embedding models and
+   collections. Without it, one OpenAI chat model, one OpenAI embedding model and one `default`
+   collection are built from the classic `OPENAI_*` / `CHUNK_*` / `ES_INDEX_*` variables, so
+   existing `.env` files keep working.
+
+```toml
+default_chat_model = "fast"
+default_collection = "general"
+
+[chat_models.fast]
+provider = "openai"
+model = "gpt-4o-mini"
+
+[chat_models.claude]
+provider = "anthropic"                 # pip install 'turinton-rag[anthropic]'
+model = "claude-sonnet-5-5"
+
+[embedding_models.small]
+provider = "openai"
+model = "text-embedding-3-small"       # dimensions are known; for other models set `dimensions`
+
+[collections.general]
+embedding_model = "small"
+
+[collections.legal]                    # its own embedding model, chunking and accepted types
+embedding_model = "small"
+kinds = ["text", "table"]              # scanned images are not indexed here
+parsers = ["pdf", "docx"]
+[collections.legal.chunker]
+chunk_size = 1200
+chunk_overlap = 150
+```
+
+See [`config/rag.example.toml`](config/rag.example.toml). **All profiles are built and validated at
+start-up**: a bad provider name, a missing API key or a missing optional package stops the process
+immediately rather than failing on the first request that uses it. A collection is tied to one
+embedding model (its index's vector size depends on it); pointing an existing index at a model of a
+different size is refused.
+
+---
+
+## API
+
+Base URL `http://localhost:8000` · interactive docs at `/docs`. Errors are
+`{"detail": "...", "code": "not_found"}` with the matching HTTP status.
 
 ```bash
-pip install -r requirements.txt
+# Ingest (default collection). Waits for the result; add ?wait=false for 202 + a job to poll.
+curl -F file=@report.pdf http://localhost:8000/api/v1/ingest
+curl -F file=@scan.png -F image_language=hi -F collection=legal -F kinds=text,table \
+     "http://localhost:8000/api/v1/ingest?force=true"
+curl http://localhost:8000/api/v1/jobs/<job_id>
+
+# Retrieve / ask — select collections, kinds, documents, and the chat model per request
+curl -X POST http://localhost:8000/api/v1/retrieve -H 'Content-Type: application/json' \
+     -d '{"query": "payment terms", "collections": ["legal"], "kinds": ["text", "table"]}'
+curl -X POST http://localhost:8000/api/v1/ask -H 'Content-Type: application/json' \
+     -d '{"query": "What is the notice period?", "model": "claude"}'
+
+# Chat: omit conversation_id to start; the server returns it
+curl -X POST http://localhost:8000/api/v1/chat -H 'Content-Type: application/json' \
+     -d '{"message": "Summarise the Q3 results"}'
+curl -N -X POST http://localhost:8000/api/v1/chat/stream -H 'Content-Type: application/json' \
+     -d '{"message": "and the margin?", "conversation_id": "<id>"}'      # SSE: start / delta / end
+
+# Catalog and housekeeping
+curl http://localhost:8000/api/v1/collections          curl http://localhost:8000/api/v1/models
+curl "http://localhost:8000/api/v1/documents?collection=legal"
+curl -X DELETE "http://localhost:8000/api/v1/documents?source=/data/legal/report.pdf&collection=legal"
+curl http://localhost:8000/health    # liveness      curl http://localhost:8000/ready   # dependencies
+curl http://localhost:8000/metrics   # Prometheus
 ```
 
-### 4. Configure Environment
+CLI (`pip install ".[cli]"`): `rag ingest FILE -c legal`, `rag retrieve "…"`, `rag ask "…" -m claude`,
+`rag chat`, `rag collections`, `rag models`, `rag documents`, `rag delete SOURCE`.
 
-```bash
-# Copy example config
-cp .env.example .env
+### MCP
 
-# Edit .env and add your OpenAI API key
-# OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxx
-```
+Set `MCP_ENABLED=true` to serve MCP at `/mcp` (stateless Streamable HTTP — any replica can answer
+any request). Behind a real domain also set `MCP_ALLOWED_HOSTS=["rag.example.com"]`
+(DNS-rebinding protection is on). Tools, all read-only: `list_collections`, `list_models`,
+`list_documents`, `search_documents`, `ask_question`.
 
-### 5. Setup Elasticsearch Cloud (Required)
-
-1. Sign up at [cloud.elastic.co](https://cloud.elastic.co/) (14-day free trial)
-2. Create a new deployment (select your region)
-3. Get your **Cloud ID**: Deployment → Manage → Cloud ID
-4. Create an **API Key**: Deployment → Security → API Keys → Create
-5. Add to `.env`:
-
-```env
-ES_CLOUD_ID=my-deployment:dXMtY2VudHJhbDEuZ2NwLmNsb3VkLmVzLmlvJGFiYzEyMyQ...
-ES_API_KEY=your-api-key-here
-```
-
-### 6. Create Required Directories
-
-```bash
-mkdir data models
-```
-
-### 7. Run the Application
-
-```bash
-# Development
-uvicorn src.api.server:app --reload --port 8000
-
-# Production
-uvicorn src.api.server:app --host 0.0.0.0 --port 8000 --workers 4
+```jsonc
+// Claude Desktop / any stdio MCP client
+{ "mcpServers": { "rag": { "command": "rag-mcp", "env": { "ES_HOST": "...", "OPENAI_API_KEY": "..." } } } }
+// remote clients: point them at  https://rag.example.com/mcp
 ```
 
 ---
 
-## 🌐 API Endpoints
+## Scaling
 
-Base URL: `http://localhost:8000`
+What makes it scale, and where each knob lives:
 
-### Health Check
+| Mechanism | Effect | Setting |
+|---|---|---|
+| Stateless API tier | add replicas freely; no sticky sessions (REST, SSE chat, MCP) | `INGEST_EMBEDDED_WORKER=false` |
+| Slim API image | no OCR / torch in replicas → small, fast cold start | `.[api,mcp]` |
+| Separate worker tier | OCR/embedding scale independently of query traffic, on GPU or CPU | `rag-worker`, `INGEST_CONCURRENCY` |
+| Redis Streams queue | exactly-once hand-out, crash take-over (XAUTOCLAIM), heartbeats, retry cap, back-pressure (`503`/`429` when full) | `INGEST_BACKEND=redis` |
+| One search round trip | all query variants × collections × kinds in a single `_msearch`; one embedding call per model | — |
+| Async everywhere | Elasticsearch, Redis and model calls never block the event loop; bounded per-dependency concurrency | `ES_MAX_CONCURRENCY`, `MODEL_MAX_CONCURRENCY` |
+| Shared caching | retrieval results, query expansions and query embeddings (L1 memory + L2 Redis) with stampede protection; invalidated across replicas on ingest/delete | `CACHE_BACKEND=tiered` |
+| Shared limits | one rate limit for the whole fleet, atomic in Redis | `RATE_LIMIT_BACKEND=redis` |
+| Load shedding | above N in-flight requests new ones get `503 + Retry-After` instead of queueing into timeouts | `MAX_CONCURRENT_REQUESTS` |
+| Idempotent indexing | content-addressed chunk ids + write → sweep → ledger commit order: retries and re-ingestion never duplicate, a crash never loses the old version | — |
+| Cheap ingestion | streamed parsing, image dedupe (by content), tiny-image skip, deskew-first OCR with early exit, bounded in-flight vectors, no per-request index refresh | `OCR_*`, `INGEST_PIPELINE_DEPTH` |
+| Compact vectors | `int8_hnsw` by default; `bbq_hnsw` (~32× smaller) and shortened OpenAI embeddings available | `ES_VECTOR_INDEX_TYPE`, `OPENAI_EMBEDDING_DIMENSIONS` |
+
+Topologies:
+
+* **One process** (development, small teams): `rag-api` with the defaults. Ingestion runs inside
+  the API process (`INGEST_BACKEND=inprocess`); run a single server process.
+* **Scaled**: Elasticsearch cluster + Redis; N API replicas (`INGEST_EMBEDDED_WORKER=false`,
+  `INGEST_BACKEND=redis`, `CACHE_BACKEND=tiered`, `RATE_LIMIT_BACKEND=redis`, `CHAT_STORE=redis`)
+  and M `rag-worker` processes. Uploads are written by the API and read by the worker, so
+  `DATA_DIR` must be a volume both can see (a shared filesystem; object storage is not built in).
+  Scale API replicas on request latency/CPU and workers on `rag_ingest_queue_depth`.
+  One server process per container is the scaling unit; use `WEB_CONCURRENCY` > 1 only with the Redis backends.
+* **Behind a proxy**: set `FORWARDED_ALLOW_IPS` to the load balancer's addresses so `X-Forwarded-For` is trusted
+  *only* from them and rate limits key on the real client (the default trusts localhost only; `*` would let any
+  client spoof its IP). Compress responses at the proxy rather than in the app.
+
+Elasticsearch sizing is yours to set (`ES_NUMBER_OF_SHARDS`, `ES_NUMBER_OF_REPLICAS`, or per
+collection `shards` / `replicas` / `vector_index_type`). Tested against Elasticsearch **9.5** with the 9.x Python client.
+
+---
+
+## Extending
+
+Everything is registered by name. A **plug-in** is any importable module with a
+`register(registries)` function, enabled with `PLUGINS=["my_company.rag_plugin"]`:
+
+```python
+# my_company/rag_plugin.py
+from pathlib import Path
+from src.ports.parsing import ParsedUnit, TextBlock
+
+class EmlParser:                                   # a new file type
+    name = "eml"
+    extensions = frozenset({".eml"})
+    def __init__(self, settings): ...              # keep construction cheap; import heavy libs in iter_units
+    def iter_units(self, path: Path):
+        yield ParsedUnit(unit=1, texts=[TextBlock(path.read_text(), "en")])
+
+def register(registries):
+    registries.parsers.register("eml", EmlParser)
+    # also: chat_providers, embedding_providers, chunkers, ocr_engines, query_expanders, rerankers,
+    #       caches, rate_limiters, conversation_stores, job_backends
+```
+
+Then list `"eml"` in a collection's `parsers`, or leave it open to all. No core file changes.
+Custom providers receive `(model_id, spec, settings)` and return an object satisfying
+`ChatModel` / `Embedder` (`src/ports/models.py`).
+
+---
+
+## Operations
+
+* **Probes**: `/health` (liveness, no dependency checks) and `/ready` (Elasticsearch, Redis-backed
+  components; `503` listing what failed). Workers expose `/metrics` on `WORKER_METRICS_PORT` (9100).
+* **Metrics**: request count/latency by route template, in-flight, shed and rate-limited requests,
+  cache hit/miss, upstream latency and errors per dependency, ingestion jobs, queue depth.
+* **Logs**: `LOG_FORMAT=json` for structured logs; every line of a request carries its
+  `X-Request-ID`. Error responses for dependency failures say only "a backing service failed" — details stay in the log.
+* **Shutdown**: SIGTERM stops taking jobs and drains running ones (`SHUTDOWN_GRACE_SECONDS`); a
+  killed worker's job is taken over by another after `JOB_VISIBILITY_TIMEOUT_SECONDS`.
+* **Ledger**: `doc-registry` records which files are fully indexed (path, checksum, kinds). Unchanged
+  files are skipped (`reindexed: false`); `force=true` re-runs. Changing a document replaces its old chunks.
+
+---
+
+## Upgrading from 1.x
+
+**Breaking changes**
+
+* Python **3.12+** (numpy 2.5 needs it). Elasticsearch Python client **9.x** (tested against a 9.5 server).
+* Modules moved: `src.services.*`, `src.pipelines.*`, `src.utils.*` are gone; the entry points
+  `uvicorn src.api.server:app`, `python -m src.cli`, and the REST paths are unchanged. LangChain
+  1.x is used only for model clients and text splitting; the unused `langchain`,
+  `langchain-community`, `langchain-elasticsearch`, `unstructured`, `spacy`, `indic-nlp-library`,
+  `pdfminer.six`, `sentence-transformers`, `rapidfuzz` and `gunicorn` dependencies are dropped (they were never imported), and
+  `slowapi` / `cachetools` are replaced by async in-repo equivalents.
+* `POST /ingest` response gained `job_id`, `status`, `status_url`, `collection`, `warnings` and may
+  return `202`; `/retrieve` and `/ask` documents gained `collection` and `kind`.
+* Failures are no longer disguised: an LLM error is now a `502` (it used to be a `200` whose
+  `answer` contained the error text); an unsupported OCR language or file type is rejected.
+* The file watcher is **off** by default (`WATCH_DATA_DIR=true` to enable); it used to re-ingest every
+  upload a second time, concurrently. `ALLOWED_FILE_EXTENSIONS`, `RETRIEVER_BM25_K1/B` and
+  `MAX_WORKERS` no longer exist. `license` metadata now matches the repository's MPL-2.0 `LICENSE`.
+
+**Migrating data**: existing `doc-text` / `doc-tables` / `doc-images` indices keep working (they are
+the `default` collection). The first ingest of each file after upgrading re-indexes it (the new
+ledger has not seen it) and removes its old chunks. Existing indices gain the new `kind` and
+`file_checksum` fields additively; an index whose vector size differs from the embedding model is refused.
+
+**Bugs fixed on the way**: re-ingesting duplicated every chunk; cross-reference chunks always
+outranked real hits (score 0.35 vs ~0.01); the "max 2 chunks per page" filter never filtered; the
+embedding cache returned the wrong vector for texts sharing a 500-character prefix; failed bulk
+writes were logged but reported as success; OCR confidence was always 0.0 (EasyOCR's
+`paragraph=True` drops it) so the "pick the better pass" logic never ran; deskew never corrected real
+scans; one-chunk pages got no keywords; Devanagari words were shredded in keyword extraction;
+chunks started with a stray `.` / `।`; uploads trusted client file names and had no size limit.
+
+---
+
+## Testing
 
 ```bash
-curl http://localhost:8000/health
+pip install -e ".[all,dev]"
+pytest tests/unit                      # no services needed
+pytest tests/integration               # needs Elasticsearch (RAG_TEST_ES_URL) and Redis (RAG_TEST_REDIS_URL)
+ruff check src tests && ruff format --check src tests && mypy src
 ```
 
-### API Documentation
-
-- **Swagger UI**: http://localhost:8000/docs
-- **ReDoc**: http://localhost:8000/redoc
-
-### Ingest Document
-
-```bash
-# Auto-detect language
-curl -X POST "http://localhost:8000/api/v1/ingest" \
-  -F "file=@document.pdf"
-
-# Specify Hindi
-curl -X POST "http://localhost:8000/api/v1/ingest" \
-  -F "file=@document.pdf" \
-  -F "image_language=hi"
-
-# Specify Marathi
-curl -X POST "http://localhost:8000/api/v1/ingest" \
-  -F "file=@document.png" \
-  -F "image_language=mr"
-```
-
-### Retrieve Documents
-
-```bash
-curl -X POST "http://localhost:8000/api/v1/retrieve" \
-  -H "Content-Type: application/json" \
-  -d '{"query": "your search query"}'
-```
-
-### Ask Question
-
-```bash
-curl -X POST "http://localhost:8000/api/v1/ask" \
-  -H "Content-Type: application/json" \
-  -d '{"query": "What is the document about?"}'
-```
-
-### Get System Status
-
-```bash
-curl http://localhost:8000/api/v1/status
-```
-
-### Delete Documents
-
-```bash
-# Delete all chunks from a specific source file
-curl -X DELETE "http://localhost:8000/api/v1/documents?source=/path/to/file.pdf"
-```
+The integration suite runs the real pipeline end to end against live Elasticsearch/Redis with
+deterministic fake models (registered through the real plug-in hook): multi-format ingestion,
+idempotent re-ingestion, collection isolation, the HTTP API, the job queues including crash
+take-over and heartbeats, a multi-replica + separate-worker topology, MCP over HTTP with the SDK's
+own client, and the CLI. OCR tests use real EasyOCR weights when available (`RAG_TEST_OCR_MODELS`).
 
 ---
 
-## 🗂️ Project Structure
+## License
 
-```
-RAG-OCR-Pipeline/
-├── src/
-│   ├── api/
-│   │   ├── server.py          # FastAPI application with rate limiting
-│   │   └── schemas.py         # Request/response models
-│   ├── core/
-│   │   ├── config.py          # Configuration (OpenAI, ES, etc.)
-│   │   └── logger.py          # Logging setup
-│   ├── pipelines/
-│   │   ├── ingestion.py       # Document ingestion with cross-refs
-│   │   ├── retrieval.py       # Query processing
-│   │   └── ask.py             # Q&A with OpenAI
-│   ├── services/
-│   │   ├── ocr.py             # Multilingual OCR (EasyOCR)
-│   │   ├── embedding.py       # OpenAI embeddings
-│   │   ├── elastic.py         # Elasticsearch client
-│   │   └── retrieval.py       # Hybrid retriever with RRF
-│   └── utils/
-│       ├── image_ops.py       # Image preprocessing + deskewing
-│       ├── language.py        # Language detection
-│       ├── nlp_processing.py  # NLP post-processing
-│       └── pdf_parser.py      # PDF extraction
-├── data/                      # Uploaded documents (gitignored)
-├── models/                    # OCR model weights (gitignored)
-├── requirements.txt           # Python dependencies
-├── .env.example              # Environment template
-├── .gitignore
-└── README.md
-```
-
----
-
-## 🌍 Supported Languages
-
-| Code | Language | Script     | OCR Support |
-| ---- | -------- | ---------- | ----------- |
-| `en` | English  | Latin      | ✅ Full     |
-| `hi` | Hindi    | Devanagari | ✅ Full     |
-| `mr` | Marathi  | Devanagari | ✅ Full     |
-
----
-
-## ⚙️ Configuration
-
-### Required Environment Variables
-
-| Variable         | Description    | Example       |
-| ---------------- | -------------- | ------------- |
-| `OPENAI_API_KEY` | OpenAI API key | `sk-xxxxxxxx` |
-
-**Elasticsearch (choose one):**
-
-| Variable      | Description            | Example                      |
-| ------------- | ---------------------- | ---------------------------- |
-| `ES_CLOUD_ID` | Elasticsearch Cloud ID | `deployment:base64string...` |
-| `ES_API_KEY`  | Elasticsearch API key  | `your-api-key`               |
-| `ES_HOST`     | Self-hosted ES URL     | `http://localhost:9200`      |
-
-### Optional Configuration
-
-| Variable                  | Default                  | Description              |
-| ------------------------- | ------------------------ | ------------------------ |
-| `OPENAI_MODEL`            | `gpt-4o-mini`            | LLM model for Q&A        |
-| `OPENAI_EMBEDDING_MODEL`  | `text-embedding-3-small` | Embedding model          |
-| `CHUNK_SIZE`              | `800`                    | Text chunk size          |
-| `CHUNK_OVERLAP`           | `200`                    | Overlap between chunks   |
-| `ENABLE_CROSS_REFERENCES` | `true`                   | Link text/tables/images  |
-| `RERANK_ENABLED`          | `true`                   | Enable result re-ranking |
-| `RERANK_TOP_K`            | `6`                      | Final results count      |
-| `OCR_GPU_ENABLED`         | `true`                   | Use GPU for OCR          |
-
----
-
-## 🏗️ Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         FastAPI Server                           │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────────┐ │
-│  │ /ingest  │  │/retrieve │  │  /ask    │  │ /health /ready   │ │
-│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └──────────────────┘ │
-└───────┼─────────────┼─────────────┼─────────────────────────────┘
-        │             │             │
-        ▼             ▼             ▼
-┌───────────────┐ ┌─────────────────────┐ ┌───────────────────────┐
-│   Ingestion   │ │   Hybrid Retriever  │ │     Ask Pipeline      │
-│   Pipeline    │ │                     │ │                       │
-│ ┌───────────┐ │ │ ┌───────┐ ┌───────┐ │ │ ┌─────────────────┐   │
-│ │ PDF Parse │ │ │ │ BM25  │ │  KNN  │ │ │ │  OpenAI GPT-4o  │   │
-│ │ OCR (GPU) │ │ │ └───┬───┘ └───┬───┘ │ │ └────────┬────────┘   │
-│ │ Chunking  │ │ │     │   RRF   │     │ │          │            │
-│ │ Cross-Ref │ │ │     └────┬────┘     │ │          ▼            │
-│ └─────┬─────┘ │ │     ┌────▼────┐     │ │   Context + Answer    │
-│       │       │ │     │ Re-Rank │     │ │                       │
-└───────┼───────┘ │     │Diversify│     │ └───────────────────────┘
-        │         │     └─────────┘     │
-        ▼         └──────────┬──────────┘
-┌───────────────────────────┐│
-│      Elasticsearch        ││
-│  ┌────────┐ ┌────────┐    ││
-│  │doc-text│ │doc-tbl │    │◄───── Query Vector
-│  └────────┘ └────────┘    ││
-│  ┌────────┐               ││
-│  │doc-img │ (with vectors)││
-│  └────────┘               ││
-└───────────────────────────┘│
-        ▲                    │
-        │  OpenAI Embeddings │
-        └────────────────────┘
-```
-
----
-
-## 🔧 Troubleshooting
-
-| Issue                          | Solution                                            |
-| ------------------------------ | --------------------------------------------------- |
-| `OPENAI_API_KEY is required`   | Add your API key to `.env`                          |
-| Elasticsearch connection error | Check if ES is running: `curl localhost:9200`       |
-| GPU not detected               | Install CUDA toolkit or set `OCR_GPU_ENABLED=false` |
-| Rate limit exceeded            | Wait 1 minute or increase `RATE_LIMIT_PER_MINUTE`   |
-| Hindi/Marathi OCR poor quality | Use high-resolution images (300+ DPI)               |
-
----
-
-## 📈 Performance Tips
-
-1. **Use GPU**: 5-10x faster OCR with CUDA
-2. **Increase Workers**: Set `MAX_WORKERS=8` for more concurrency
-3. **Enable Caching**: Set `USE_REDIS_CACHE=true` with Redis
-4. **Tune Chunk Size**: Smaller chunks = more precise, larger = more context
-5. **Pre-warm Models**: First request loads models; subsequent are faster
-
----
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
----
-
-## 📄 License
-
-See [LICENSE](LICENSE) for details.
-
----
-
-## 🙏 Acknowledgments
-
-- [EasyOCR](https://github.com/JaidedAI/EasyOCR) - Multilingual OCR
-- [LangChain](https://github.com/langchain-ai/langchain) - LLM framework
-- [FastAPI](https://fastapi.tiangolo.com/) - Modern Python web framework
-- [Elasticsearch](https://www.elastic.co/) - Vector search engine
+Mozilla Public License 2.0 — see [LICENSE](LICENSE).

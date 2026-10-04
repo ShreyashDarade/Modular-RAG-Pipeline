@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # CPU-only torch: the default Linux wheel drags in multi-GB CUDA libraries the tests never use.
+  TORCH_INDEX: https://download.pytorch.org/whl/cpu
+  EXTRAS: api,worker,docx,xlsx,mcp,cli,anthropic,google,ollama,dev
+
+jobs:
+  lint:
+    name: Lint and types
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install torch torchvision --index-url "$TORCH_INDEX"
+      - run: pip install -e ".[$EXTRAS]"
+      - run: ruff check src tests
+      - run: ruff format --check src tests
+      - run: mypy src
+
+  unit:
+    name: Unit tests (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install torch torchvision --index-url "$TORCH_INDEX"
+      - run: pip install -e ".[$EXTRAS]"
+      - run: pytest tests/unit -q
+
+  integration:
+    name: Integration tests (Elasticsearch + Redis)
+    runs-on: ubuntu-latest
+    services:
+      elasticsearch:
+        image: docker.elastic.co/elasticsearch/elasticsearch:9.5.4
+        env:
+          discovery.type: single-node
+          xpack.security.enabled: "false"
+          ES_JAVA_OPTS: -Xms1g -Xmx1g
+        ports: ["9200:9200"]
+        options: >-
+          --health-cmd "curl -fs http://localhost:9200/_cluster/health"
+          --health-interval 10s --health-timeout 5s --health-retries 30
+      redis:
+        image: redis:8-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      RAG_TEST_ES_URL: http://localhost:9200
+      RAG_TEST_REDIS_URL: redis://localhost:6379/5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install torch torchvision --index-url "$TORCH_INDEX"
+      - run: pip install -e ".[$EXTRAS]"
+      # OCR tests skip themselves unless EasyOCR weights are present; mount them via RAG_TEST_OCR_MODELS to run them.
+      - run: pytest tests/integration -q

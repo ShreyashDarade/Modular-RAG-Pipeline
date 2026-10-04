@@ -1,0 +1,63 @@
+# Example RAG configuration. Point RAG_CONFIG at a copy of this file.
+#
+# Models and collections are declared here; credentials and infrastructure (Elasticsearch,
+# Redis, API keys) stay in environment variables / .env. Without RAG_CONFIG the system builds
+# one OpenAI chat model, one OpenAI embedding model and one "default" collection from the
+# classic OPENAI_* / CHUNK_* / ES_INDEX_* variables.
+
+default_chat_model = "fast"        # used when a request does not name a model
+default_collection = "general"     # used when a request does not name a collection
+utility_model = "fast"             # query expansion and chat question-condensing
+query_expander = "llm"             # "llm" or "identity" (no LLM call during retrieval)
+reranker = "heuristic"             # "heuristic" or "identity"
+
+# --- chat models: choose one per request with {"model": "<name>"} ---------------------------
+[chat_models.fast]
+provider = "openai"                # openai | azure_openai | anthropic | google | ollama
+model = "gpt-4o-mini"
+temperature = 0.1
+max_tokens = 2048
+
+[chat_models.claude]               # needs: pip install 'turinton-rag[anthropic]' and ANTHROPIC_API_KEY
+provider = "anthropic"
+model = "claude-sonnet-5-5"
+max_tokens = 2048
+
+[chat_models.local]                # needs: pip install 'turinton-rag[ollama]' and OLLAMA_BASE_URL
+provider = "ollama"
+model = "llama3.1"
+
+# --- embedding models: a collection is tied to one (its index dimensions depend on it) -------
+[embedding_models.small]
+provider = "openai"
+model = "text-embedding-3-small"   # 1536 dimensions, known to the pipeline
+
+[embedding_models.large-compact]
+provider = "openai"
+model = "text-embedding-3-large"
+dimensions = 1024                  # shortened vectors: half the memory of the native 3072
+
+# --- collections: independently searchable corpora ---------------------------------------
+[collections.general]
+description = "Company documents"
+embedding_model = "small"
+# kinds = ["text", "table", "image"]    # which content kinds to index (default: all)
+# parsers = ["pdf", "docx", "text"]     # which file types it accepts (default: all registered)
+
+[collections.general.chunker]
+name = "recursive"
+chunk_size = 800
+chunk_overlap = 200
+min_chunk_size = 100
+
+[collections.legal]
+description = "Contracts (text and tables only; scanned images are not indexed)"
+embedding_model = "large-compact"
+kinds = ["text", "table"]
+parsers = ["pdf", "docx"]
+shards = 2                         # per-collection index settings override the global defaults
+vector_index_type = "bbq_hnsw"     # Elasticsearch 8.18+/9.x: ~32x smaller vector index
+
+[collections.legal.chunker]
+chunk_size = 1200
+chunk_overlap = 150

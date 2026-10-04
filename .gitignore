@@ -157,3 +157,7 @@ MANIFEST
 *.tar.gz
 *.zip
 *.rar
+
+# Tooling caches
+.ruff_cache/
+.mypy_cache/
