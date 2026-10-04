@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import io
 from collections.abc import Iterator
 from itertools import islice
 from pathlib import Path
@@ -30,7 +31,7 @@ class CsvParser:
     def iter_units(self, path: Path) -> Iterator[ParsedUnit]:
         delimiter = "\t" if path.suffix.lower() == ".tsv" else ","
         # Decode up front so a bad encoding is a ParseError rather than a mid-stream crash.
-        reader = csv.reader(read_utf8(path).splitlines(), delimiter=delimiter)
+        reader = csv.reader(io.StringIO(read_utf8(path), newline=""), delimiter=delimiter)
         try:
             header = next(reader)
         except StopIteration:
@@ -56,7 +57,7 @@ class XlsxParser:
             from openpyxl import load_workbook
         except ImportError as exc:
             raise ProviderUnavailableError(
-                "XLSX parsing needs openpyxl: pip install 'turinton-rag[xlsx]'"
+                "XLSX parsing needs openpyxl: pip install 'ai-rag-info[xlsx]'"
             ) from exc
         try:
             workbook = load_workbook(path, read_only=True, data_only=True)
@@ -70,7 +71,10 @@ class XlsxParser:
                 if header is None:
                     continue
                 language = None
-                while block := [r for r in islice(rows, ROWS_PER_UNIT) if any(v is not None for v in r)]:
+                while raw := list(islice(rows, ROWS_PER_UNIT)):
+                    block = [r for r in raw if any(v is not None for v in r)]
+                    if not block:  # a run of blank rows is a gap, not the end of the sheet
+                        continue
                     if language is None:
                         language = detect_language(
                             " ".join(str(v) for r in (header, *block) for v in r if v is not None)

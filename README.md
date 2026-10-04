@@ -17,8 +17,9 @@ Elasticsearch and Redis).
 | **Many file types** | PDF (text, tables, embedded images), images and multi-page TIFF (OCR), text/Markdown, HTML, CSV/TSV, DOCX, XLSX — one parser per type, add more with a plug-in |
 | **Collections** | Independent corpora, each with its own embedding model, chunker, accepted file types and indices. Ingest into, and search across, any selection of them |
 | **Selective indexing** | Per request choose collections, content *kinds* (`text`, `table`, `image`) and even individual documents. Skipping `image` skips OCR entirely |
-| **Hybrid retrieval** | BM25 + vector search fused with Reciprocal Rank Fusion, cross-reference expansion (same-page / adjacent-page chunks), re-ranking, diversity |
-| **Multiple models** | Named chat and embedding profiles: OpenAI, Azure OpenAI, Anthropic, Google, Ollama (or your own). Pick the chat model per request |
+| **Hybrid retrieval** | BM25 + vector search fused with Reciprocal Rank Fusion, cross-reference expansion (same-page / adjacent-page chunks), **model-based re-ranking** (local cross-encoder, Cohere, Jina) over the merged candidates of all query variants, diversity |
+| **Multiple models** | Named chat and embedding profiles: OpenAI, Azure OpenAI, Anthropic, Google, Ollama, or self-hosted Hugging Face embeddings (or your own). Pick the chat model per request |
+| **Evaluation** | `rag eval`: score retrieval (hit/recall/precision@k, MRR, nDCG with bootstrap CIs) and answers (LLM-judged faithfulness/correctness, citation validity) on your own labelled questions; compare configurations with paired statistics; gate regressions in CI |
 | **Chat** | Multi-turn conversations with question condensing, per-turn model choice, server-sent-event streaming, Redis-backed history |
 | **MCP server** | `search_documents`, `ask_question`, `list_*` tools over stateless Streamable HTTP or stdio — connect Claude Desktop, IDE agents, … |
 | **Scales out** | Stateless API replicas, Redis-Streams job queue with crash recovery, shared cache / rate limits / conversations, load shedding, Prometheus metrics |
@@ -43,7 +44,11 @@ Elasticsearch and Redis).
                                      conversations · locks          (GPU/CPU, scale independently)
 ```
 
-Code is organised as **ports and adapters**. Orchestrators depend only on the small protocols in
+Code is organised as **ports and adapters**, and the architecture is a **contract that is checked, not a
+convention**: [`docs/framework.md`](docs/framework.md) defines the layers, the public surfaces, the
+extension points and the versioning rules *first*; [`docs/adr/`](docs/adr/) records why; and CI fails when
+code breaks them (import layering and third-party confinement, the checked-in OpenAPI document, the public
+SDK surface, conformance suites for every port). Orchestrators depend only on the small protocols in
 `src/ports/`; `src/core/container.py` is the one place that picks concrete classes.
 
 ```
@@ -61,7 +66,11 @@ src/
   jobs/         in-process queue · Redis Streams queue (workers, take-over, locks)
   chat/         answer service · chat service · conversation stores
   runtime/      caches · rate limiters · bulkhead / single-flight · Prometheus metrics
+  contracts/    wire models of the REST API (pydantic only) - shared by the API and the SDK
+  application/  RagService: every use case, implemented once; HTTP and the embedded SDK are thin adapters over it
+  evaluation/   offline retrieval / answer evaluation (rag eval)
   api/ cli/ mcp_server/ worker.py                        (entry points)
+ai_rag_info/   the public Python SDK (client, in-process engine, errors, models, extension + testing helpers)
 ```
 
 How that maps to SOLID, concretely:
@@ -132,7 +141,7 @@ provider = "openai"
 model = "gpt-4o-mini"
 
 [chat_models.claude]
-provider = "anthropic"                 # pip install 'turinton-rag[anthropic]'
+provider = "anthropic"                 # pip install 'ai-rag-info[anthropic]'
 model = "claude-sonnet-5-5"
 
 [embedding_models.small]
@@ -150,6 +159,9 @@ parsers = ["pdf", "docx"]
 chunk_size = 1200
 chunk_overlap = 150
 ```
+
+A **reranker** is configured the same way (`reranker = "<name>"`, with the model under
+`[reranker_models.<name>]`); see [Evaluation](#evaluation) for how to choose one with data.
 
 See [`config/rag.example.toml`](config/rag.example.toml). **All profiles are built and validated at
 start-up**: a bad provider name, a missing API key or a missing optional package stops the process
@@ -209,6 +221,66 @@ any request). Behind a real domain also set `MCP_ALLOWED_HOSTS=["rag.example.com
 
 ---
 
+## Python SDK
+
+One package, two ways to use the same interface. `pip install ai-rag-info` is a **thin client**
+(`httpx` + `pydantic`, a dozen packages in all); the engine is an extra.
+
+```python
+# Remote: talk to a running server. Thin install.
+from ai_rag_info import RagClient                    # blocking;  AsyncRagClient is the async one
+
+with RagClient("http://localhost:8000", api_key="...") as rag:
+    rag.documents.ingest("report.pdf", collection="finance")
+    result = rag.retrieve("cloud revenue growth", collections=["finance"], kinds=["text", "table"])
+    answer = rag.ask("What changed in Q2?", model="claude")
+    turn = rag.chat.send("And the margin?")
+    for event in rag.chat.stream("Summarise it", conversation_id=turn.conversation_id):
+        ...                                            # ChatStartEvent, ChatDeltaEvent..., ChatEndEvent
+```
+
+```python
+# Embedded: the whole pipeline inside your application.  pip install 'ai-rag-info[engine,worker]'
+from ai_rag_info import AsyncRag
+
+async with await AsyncRag.create() as rag:            # configuration: env / .env / RAG_CONFIG, as for the server
+    await rag.documents.ingest("report.pdf")
+    answer = await rag.ask("What changed in Q2?")
+    report = await rag.evaluate("cases.jsonl")         # experimental: only where the engine is
+```
+
+* **Same interface, same models, same errors in both modes.** The public methods are written once
+  (`ai_rag_info/_facade.py`) over a narrow transport protocol; the HTTP and in-process backends only move
+  requests. A `404 not_found` over HTTP and a `NotFoundError` in-process are the same exception, with the same
+  `code`; errors rebuilt from a response also carry `request_id` and `details` (e.g. the failed job's id).
+* **Capability differences are explicit.** `evaluate()` and `.engine` exist only on `Rag` / `AsyncRag`; the HTTP
+  client has no such attribute rather than a method that fails at run time.
+* **Async is the implementation; sync is a bridge** over one background event loop. A blocking call from inside
+  a running event loop is a `UsageError`, not a silent stall.
+* **Retries are conservative.** Connection failures and 429/503 are retried for every call (the server refused
+  before doing work); 408/502/504 only for idempotent calls (reads, and ingestion, which is idempotent by content
+  checksum) - a chat turn is never re-sent after a gateway error, because it may already have been recorded.
+  `Retry-After` is honoured. Responses are validated strictly (a malformed one is a `ResponseError`) but unknown
+  fields are ignored, so a newer server never breaks an older SDK.
+* **Extending** uses the same package: `ai_rag_info.extend` has the port protocols a plug-in implements, and
+  `ai_rag_info.testing` has `check_embedder`, `check_reranker`, `check_parser`, ... - the conformance checks the
+  built-in components pass in CI - so a plug-in can prove it honours the contract.
+
+What is public, how it may change, and how deprecations work (`ai_rag_info.deprecated`, a two-minor-release
+window) are in [`docs/framework.md`](docs/framework.md). Everything under `src.*` is internal.
+
+### Install matrix
+
+| You want | Install |
+|---|---|
+| a client for a server somebody runs | `pip install ai-rag-info` |
+| the pipeline inside your application | `pip install 'ai-rag-info[engine]'` (+ `worker` to parse PDFs / run OCR, `local` for self-hosted models) |
+| an API replica | `pip install 'ai-rag-info[api]'` (the Docker `EXTRAS` build argument) |
+| an ingestion worker | `pip install 'ai-rag-info[worker,docx,xlsx]'` |
+| everything | `pip install 'ai-rag-info[all]'` |
+
+---
+
 ## Scaling
 
 What makes it scale, and where each knob lives:
@@ -224,6 +296,7 @@ What makes it scale, and where each knob lives:
 | Shared caching | retrieval results, query expansions and query embeddings (L1 memory + L2 Redis) with stampede protection; invalidated across replicas on ingest/delete | `CACHE_BACKEND=tiered` |
 | Shared limits | one rate limit for the whole fleet, atomic in Redis | `RATE_LIMIT_BACKEND=redis` |
 | Load shedding | above N in-flight requests new ones get `503 + Retry-After` instead of queueing into timeouts | `MAX_CONCURRENT_REQUESTS` |
+| Bounded everything | Redis connect/read timeouts, per-dependency concurrency caps, an overall deadline on requests *and* streamed answers, uploads refused with `413` before they are spooled, chat history trimmed to a character budget | `REDIS_SOCKET_TIMEOUT_SECONDS`, `REQUEST_TIMEOUT_SECONDS`, `MAX_UPLOAD_MB`, `CHAT_HISTORY_MAX_CHARS` |
 | Idempotent indexing | content-addressed chunk ids + write → sweep → ledger commit order: retries and re-ingestion never duplicate, a crash never loses the old version | — |
 | Cheap ingestion | streamed parsing, image dedupe (by content), tiny-image skip, deskew-first OCR with early exit, bounded in-flight vectors, no per-request index refresh | `OCR_*`, `INGEST_PIPELINE_DEPTH` |
 | Compact vectors | `int8_hnsw` by default; `bbq_hnsw` (~32× smaller) and shortened OpenAI embeddings available | `ES_VECTOR_INDEX_TYPE`, `OPENAI_EMBEDDING_DIMENSIONS` |
@@ -244,6 +317,49 @@ Topologies:
 
 Elasticsearch sizing is yours to set (`ES_NUMBER_OF_SHARDS`, `ES_NUMBER_OF_REPLICAS`, or per
 collection `shards` / `replicas` / `vector_index_type`). Tested against Elasticsearch **9.5** with the 9.x Python client.
+
+### Measured
+
+`python scripts/benchmark.py` starts the real HTTP stack against a local Elasticsearch with deterministic fake models
+(so it measures this system, not an LLM provider) and reports ingestion throughput, retrieval latency/throughput at several
+concurrency levels (cache-cold and cache-warm), what each CPU is doing, and the cost of one batched search against the
+serial calls of the 1.x design. On a shared 4-core VM with Elasticsearch 9.5 on the same machine:
+
+* **Ingestion** 23 documents/s (460 chunks/s) with one server process, up from 3.9 documents/s before the per-write
+  refresh waits were removed; now bound by that one process.
+* **Cache-cold retrieval** ~21 requests/s at 24 Elasticsearch searches each - Elasticsearch, not the application,
+  is saturated (~3 of 4 cores vs ~0.3). Query expansion and fuzzy matching are the levers: both off gives ~180 requests/s,
+  at a recall cost this benchmark cannot measure.
+* **Cache-warm retrieval** ~1 000-1 100 requests/s per server process, p50 7-48 ms from 8 to 64 clients.
+
+Details, the limits of these numbers (fake models, tiny corpus, shared machine) and how to reproduce them are in
+[`docs/benchmark.md`](docs/benchmark.md). Run it on your own hardware before sizing anything.
+
+---
+
+## Evaluation
+
+Whether a change helps is a measurement, not an opinion. `rag eval` runs a labelled question set
+through the real pipeline and scores it:
+
+```bash
+rag eval generate -c legal -n 100 -o cases.jsonl          # draft questions from the corpus (synthetic: review them)
+rag eval run cases.jsonl -c legal --out base.json         # hit/recall/precision/nDCG@k, MRR, latency, 95% CIs
+rag eval sweep cases.jsonl -c legal \
+    -v base:reranker=heuristic -v precise:reranker=precise -v noexp:query_expander=identity
+rag eval run cases.jsonl --answers --judge-model claude   # + faithfulness, correctness, citation validity
+rag eval run cases.jsonl --baseline base.json --max-drop 0.02   # exit 1 on a regression (CI gate)
+```
+
+A case is `{"id", "query", "relevant": [{"source": "report.pdf", "pages": [3]}], "reference_answer", "tags"}`
+per JSON line. Variants override any setting (`hybrid_alpha=0.7`, `rerank_candidates=50`) or config
+field (`reranker`, `query_expander`) and are validated like real configuration. Comparisons use a
+paired bootstrap over the *same* queries, so a difference is reported with an interval, not just a
+number. Everything about the method, the metrics and its limits - and a worked example on a public
+benchmark (BEIR SciFact, real local models) - is in [`docs/evaluation.md`](docs/evaluation.md). Its headline: a
+cross-encoder lifted BM25 by +0.064 nDCG@10, but on top of a strong hybrid first stage neither of two
+cross-encoders helped, and the old hand-weighted default reranker hurt (-0.048) - so reranking is off by
+default and a model reranker is something to switch on *after* measuring it on your data.
 
 ---
 
@@ -273,6 +389,8 @@ def register(registries):
 Then list `"eml"` in a collection's `parsers`, or leave it open to all. No core file changes.
 Custom providers receive `(model_id, spec, settings)` and return an object satisfying
 `ChatModel` / `Embedder` (`src/ports/models.py`).
+
+---
 
 ---
 
@@ -306,6 +424,13 @@ Custom providers receive `(model_id, spec, settings)` and return an object satis
   return `202`; `/retrieve` and `/ask` documents gained `collection` and `kind`.
 * Failures are no longer disguised: an LLM error is now a `502` (it used to be a `200` whose
   `answer` contained the error text); an unsupported OCR language or file type is rejected.
+* **Re-ranking changed.** One reranker call now orders the merged candidates of all query variants against
+  the user's own query (it used to run per variant), and `RERANK_CANDIDATES` bounds its cost. The default is
+  now `identity` (keep the fused order): the old hand-weighted `heuristic` scored *below* no reranking on a
+  public benchmark ([`docs/evaluation.md`](docs/evaluation.md)). `RERANK_ENABLED=true` or `reranker = "heuristic"`
+  restores it. (When you search several collections at once, use a model reranker: without one the collections are
+  interleaved by rank, since their first-stage scores are not comparable.) Plug-in rerankers must now be `async` and are registered as factories taking
+  `(name, spec, settings)`; `RetrievedDocument.rerank_score` is `None` until reranked.
 * The file watcher is **off** by default (`WATCH_DATA_DIR=true` to enable); it used to re-ingest every
   upload a second time, concurrently. `ALLOWED_FILE_EXTENSIONS`, `RETRIEVER_BM25_K1/B` and
   `MAX_WORKERS` no longer exist. `license` metadata now matches the repository's MPL-2.0 `LICENSE`.
@@ -322,6 +447,10 @@ writes were logged but reported as success; OCR confidence was always 0.0 (EasyO
 `paragraph=True` drops it) so the "pick the better pass" logic never ran; deskew never corrected real
 scans; one-chunk pages got no keywords; Devanagari words were shredded in keyword extraction;
 chunks started with a stray `.` / `।`; uploads trusted client file names and had no size limit.
+The OCR "clean-up" rewrote *correct* text (`learn` → `leam`, `class` → `dass`, `2020` → `2०2०` in Hindi, URLs split into
+`www. example. com`, `&`/`%`/`-` deleted, and a Devanagari word-final nukta glued to the next word); CSV cells
+containing newlines were merged; XLSX rows after a long blank gap were silently dropped; chat history was sent to
+the model without any size limit.
 
 ---
 
@@ -329,16 +458,25 @@ chunks started with a stray `.` / `।`; uploads trusted client file names and h
 
 ```bash
 pip install -e ".[all,dev]"
-pytest tests/unit                      # no services needed
-pytest tests/integration               # needs Elasticsearch (RAG_TEST_ES_URL) and Redis (RAG_TEST_REDIS_URL)
-ruff check src tests && ruff format --check src tests && mypy src
+pytest tests/unit tests/architecture tests/contract tests/conformance    # no services needed
+pytest tests/integration tests/sdk     # needs Elasticsearch (RAG_TEST_ES_URL) and Redis (RAG_TEST_REDIS_URL)
+pytest -m packaging tests/sdk/test_packaging.py   # builds the wheel, installs it bare into a clean venv (needs uv)
+ruff check src tests scripts ai_rag_info && ruff format --check src tests scripts ai_rag_info
+mypy src ai_rag_info                  # ai_rag_info (the public SDK) is held to strict typing
+lint-imports                           # architecture contracts (layering, third-party confinement, thin client)
+python scripts/export_openapi.py       # after an intentional wire-contract change; tests/contract fails until you do
+python scripts/api_surface.py --write  # after an intentional public-API change
 ```
 
 The integration suite runs the real pipeline end to end against live Elasticsearch/Redis with
 deterministic fake models (registered through the real plug-in hook): multi-format ingestion,
 idempotent re-ingestion, collection isolation, the HTTP API, the job queues including crash
 take-over and heartbeats, a multi-replica + separate-worker topology, MCP over HTTP with the SDK's
-own client, and the CLI. OCR tests use real EasyOCR weights when available (`RAG_TEST_OCR_MODELS`).
+own client, and the CLI. OCR tests use real EasyOCR weights when available (`RAG_TEST_OCR_MODELS`), including a correctly shaped Hindi
+rendering that goes through OCR, ingestion and lexical search. The evaluation harness is tested against
+hand-computed metric values and end to end through the CLI. Local-model tests use real weights when they are in the Hugging Face
+cache. The SDK's parity suite (`tests/sdk/`) runs the same test bodies against the embedded engine and the HTTP client through
+the real application, and one test points both at the *same* engine and compares their outputs. Around 94% of `src/` is covered.
 
 ---
 

@@ -32,6 +32,7 @@ from src.core.types import JobRecord, JobSpec
 from src.jobs.common import decode, encode, failure, is_retryable
 from src.ports.runtime import JobHandler
 from src.runtime.metrics import INGEST_JOBS, INGEST_QUEUE_DEPTH, INGEST_SECONDS
+from src.runtime.redis_client import new_client
 
 if TYPE_CHECKING:
     from src.core.config import Settings
@@ -49,8 +50,10 @@ def _wrap(exc: RedisError) -> UpstreamError:
 class RedisStreamsJobBackend:
     def __init__(self, settings: Settings, *, namespace: str = "rag") -> None:
         self._s = settings
-        self._client: aioredis.Redis = aioredis.from_url(
-            settings.redis_url, decode_responses=True, health_check_interval=30
+        self._client: aioredis.Redis = new_client(
+            settings.redis_url,
+            decode_responses=True,
+            socket_timeout=settings.redis_socket_timeout_seconds,
         )
         self._stream = f"{namespace}:ingest:stream"
         self._job_prefix = f"{namespace}:job:"
@@ -58,6 +61,7 @@ class RedisStreamsJobBackend:
         self._consumer = f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:6]}"
         self._release = self._client.register_script(_RELEASE)
         self._renew = self._client.register_script(_RENEW)
+        self._lock_ttl_ms = LOCK_TTL_MS
 
     # --- lifecycle -------------------------------------------------------------------------
     async def start(self) -> None:
@@ -125,15 +129,26 @@ class RedisStreamsJobBackend:
     async def lock(self, key: str) -> AsyncIterator[None]:
         name, token = self._lock_prefix + key, uuid.uuid4().hex
         try:
-            while not await self._client.set(name, token, nx=True, px=LOCK_TTL_MS):  # noqa: ASYNC110 - polling a remote lock
+            while not await self._client.set(name, token, nx=True, px=self._lock_ttl_ms):  # noqa: ASYNC110 - polling a remote lock
                 await asyncio.sleep(0.25)
         except RedisError as exc:
             raise _wrap(exc) from exc
 
         async def keep_alive() -> None:
+            normal, after_error = self._lock_ttl_ms / 3000, self._lock_ttl_ms / 10_000
+            delay = normal
             while True:
-                await asyncio.sleep(LOCK_TTL_MS / 3000)
-                if not await self._renew(keys=[name], args=[token, LOCK_TTL_MS]):
+                await asyncio.sleep(delay)
+                try:
+                    renewed = await self._renew(keys=[name], args=[token, self._lock_ttl_ms])
+                except RedisError as exc:
+                    # transient: retry far sooner than the normal cadence, so a couple of failures in a
+                    # row cannot use up the margin before the TTL runs out
+                    logger.warning("lock %s renewal failed, retrying: %s", key, exc)
+                    delay = after_error
+                    continue
+                delay = normal
+                if not renewed:
                     logger.error("lost lock %s while still holding it", key)
                     return
 
@@ -142,7 +157,7 @@ class RedisStreamsJobBackend:
             yield
         finally:
             renewer.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            with contextlib.suppress(asyncio.CancelledError, RedisError):
                 await renewer
             with contextlib.suppress(RedisError):  # the TTL frees it anyway
                 await self._release(keys=[name], args=[token])

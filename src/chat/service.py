@@ -61,8 +61,20 @@ class ChatService:
         self._store = store
         self._utility_model = utility_model
         self._history_limit = settings.chat_history_messages
+        self._history_max_chars = settings.chat_history_max_chars
         self._condense = settings.chat_condense_questions
         self._max_chars = settings.max_query_chars
+
+    def _fit(self, history: list[ChatMessage]) -> list[ChatMessage]:
+        """Drop the oldest turns until the history fits the character budget, so a long conversation
+        (or a few very long messages) cannot overflow the model's context window. The most recent
+        turn is always kept."""
+        start = 0
+        total = sum(len(m.content) for m in history)
+        while total > self._history_max_chars and len(history) - start > 2:
+            total -= len(history[start].content) + len(history[start + 1].content)
+            start += 2
+        return history[start:]
 
     async def _begin(self, conversation_id: str | None, message: str) -> tuple[str, list[ChatMessage], str]:
         message = message.strip()
@@ -75,6 +87,7 @@ class ChatService:
         history = await self._store.load(conversation_id, self._history_limit)
         if not history:
             raise NotFoundError(f"conversation '{conversation_id}' not found (unknown or expired)")
+        history = self._fit(history)
         standalone = message
         if self._condense:
             standalone = (

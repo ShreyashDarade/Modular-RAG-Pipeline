@@ -3,7 +3,7 @@ requires = ["setuptools>=80"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "turinton-rag"
+name = "ai-rag-info"
 version = "2.0.0"
 description = "Modular, horizontally scalable RAG: multi-format ingestion with OCR, selective multi-collection hybrid retrieval, multi-model chat, MCP server"
 readme = "README.md"
@@ -13,10 +13,17 @@ license-files = ["LICENSE"]
 authors = [{name = "Turinton AI", email = "support@turinton.ai"}]
 keywords = ["rag", "ocr", "elasticsearch", "openai", "mcp", "fastapi", "multilingual"]
 
-# Core: everything the retrieval / chat path needs. Deliberately free of OCR, PDF and
-# torch so that API replicas stay small and start fast.
+# Core = the thin client: `pip install ai-rag-info` gives `ai_rag_info.RagClient` and the shared models and
+# errors, with no engine, no Elasticsearch, no torch (docs/adr/0005). The engine is the `engine` extra.
 dependencies = [
     "pydantic>=2.13",
+    "httpx>=0.28",
+]
+
+[project.optional-dependencies]
+# The engine: everything the retrieval / chat path needs, in-process (`ai_rag_info.Rag`) or behind the API.
+# Deliberately free of OCR, PDF and torch so that API replicas stay small and start fast.
+engine = [
     "pydantic-settings>=2.15",
     "langchain-core>=1.6",
     "langchain-text-splitters>=1.1",
@@ -26,16 +33,17 @@ dependencies = [
     "prometheus-client>=0.26",
     "langdetect>=1.0.9",
 ]
-
-[project.optional-dependencies]
+# Every extra below includes the engine: each one adds something to it.
 # HTTP API replica (stateless; no OCR stack).
 api = [
+    "ai-rag-info[engine]",
     "fastapi>=0.142",
     "uvicorn[standard]>=0.54",
     "python-multipart>=0.0.32",
 ]
 # Ingestion worker: parsers, OCR, keyword extraction, file watching.
 worker = [
+    "ai-rag-info[engine]",
     "pymupdf>=1.28",
     "pandas>=3.0",
     "tabulate>=0.10",
@@ -48,25 +56,33 @@ worker = [
     "watchdog>=6.0",
 ]
 # Additional document types (each parser reports a clear error if its extra is missing).
-docx = ["python-docx>=1.2"]
-xlsx = ["openpyxl>=3.1"]
+docx = ["ai-rag-info[engine]", "python-docx>=1.2"]
+xlsx = ["ai-rag-info[engine]", "openpyxl>=3.1"]
 # Additional chat / embedding providers (OpenAI and Azure OpenAI are built in).
-anthropic = ["langchain-anthropic>=1.7"]
-google = ["langchain-google-genai>=4.4"]
-ollama = ["langchain-ollama>=1.1"]
+anthropic = ["ai-rag-info[engine]", "langchain-anthropic>=1.7"]
+google = ["ai-rag-info[engine]", "langchain-google-genai>=4.4"]
+ollama = ["ai-rag-info[engine]", "langchain-ollama>=1.1"]
+# Self-hosted models (no API key): the `huggingface` embedding provider and the `cross-encoder` reranker.
+local = [
+    "ai-rag-info[engine]",
+    "transformers>=4.50",
+    "torch>=2.14",
+]
 # Model Context Protocol server.
-mcp = ["mcp>=2.3"]
-cli = ["typer>=0.27"]
+mcp = ["ai-rag-info[engine]", "mcp>=2.3"]
+cli = ["ai-rag-info[engine]", "typer>=0.27"]
 all = [
-    "turinton-rag[api,worker,docx,xlsx,anthropic,google,ollama,mcp,cli]",
+    "ai-rag-info[engine,api,worker,docx,xlsx,anthropic,google,ollama,local,mcp,cli]",
 ]
 dev = [
     "pytest>=9.1",
     "pytest-asyncio>=1.4",
-    "httpx>=0.28",
     "fakeredis>=2.39",
     "ruff>=0.16",
     "mypy>=2.4",
+    "psutil>=7.0",  # scripts/benchmark.py
+    "import-linter>=2.1",  # architecture contracts (tests/architecture, CI)
+    "griffe>=1.5",  # public-API diff against the last release (CI)
 ]
 
 [project.scripts]
@@ -76,7 +92,1107 @@ rag-worker = "src.worker:main"
 rag-mcp = "src.mcp_server.main:main"
 
 [tool.setuptools.packages.find]
-include = ["src*"]
+include = ["src*", "ai_rag_info*"]
+
+[tool.setuptools.package-data]
+ai_rag_info = ["py.typed"]
+
+# --- Architecture contracts (docs/framework.md, section 2; docs/adr/0002) ----------------------------------
+# Run with `lint-imports`; enforced in CI and by tests/architecture/. Type-checking-only imports create no
+# runtime coupling and are not counted.
+[tool.importlinter]
+root_packages = ["src", "ai_rag_info"]
+include_external_packages = true
+exclude_type_checking_imports = true
+
+[[tool.importlinter.contracts]]
+name = "Layered architecture: dependencies point inward"
+type = "layers"
+layers = [
+    "ai_rag_info.embedded | ai_rag_info.extend | ai_rag_info.testing",
+    "src.api | src.cli | src.worker",
+    "src.mcp_server | src.evaluation",
+    "src.application",
+    "src.core.container",
+    "src.core.bootstrap",
+    "src.chat",
+    "src.retrieval | src.ingestion",
+    "src.indexing | src.jobs | src.chunking | src.parsing | src.models",
+    "src.runtime",
+    "src.core.registry",
+    "src.ports",
+    "src.core.config",
+    "src.core.specs | src.core.kinds",
+    "src.contracts",
+    "src.core.types | src.core.errors | src.core.logger",
+]
+
+[[tool.importlinter.contracts]]
+name = "cv2 is imported only by src.parsing"
+type = "forbidden"
+source_modules = [
+    "src.api",
+    "src.application",
+    "src.chat",
+    "src.chunking",
+    "src.cli",
+    "src.contracts",
+    "src.core.bootstrap",
+    "src.core.config",
+    "src.core.container",
+    "src.core.errors",
+    "src.core.kinds",
+    "src.core.logger",
+    "src.core.registry",
+    "src.core.specs",
+    "src.core.types",
+    "src.evaluation",
+    "src.indexing",
+    "src.ingestion",
+    "src.jobs",
+    "src.mcp_server",
+    "src.models",
+    "src.ports",
+    "src.retrieval",
+    "src.runtime",
+    "src.worker",
+    "ai_rag_info.embedded",
+    "ai_rag_info.extend",
+    "ai_rag_info.testing",
+    "ai_rag_info.client",
+    "ai_rag_info.errors",
+    "ai_rag_info.models",
+    "ai_rag_info._backend",
+    "ai_rag_info._compat",
+    "ai_rag_info._facade",
+    "ai_rag_info._http",
+    "ai_rag_info._sse",
+    "ai_rag_info._sync",
+    "ai_rag_info._version",
+]
+forbidden_modules = ["cv2"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "docx is imported only by src.parsing"
+type = "forbidden"
+source_modules = [
+    "src.api",
+    "src.application",
+    "src.chat",
+    "src.chunking",
+    "src.cli",
+    "src.contracts",
+    "src.core.bootstrap",
+    "src.core.config",
+    "src.core.container",
+    "src.core.errors",
+    "src.core.kinds",
+    "src.core.logger",
+    "src.core.registry",
+    "src.core.specs",
+    "src.core.types",
+    "src.evaluation",
+    "src.indexing",
+    "src.ingestion",
+    "src.jobs",
+    "src.mcp_server",
+    "src.models",
+    "src.ports",
+    "src.retrieval",
+    "src.runtime",
+    "src.worker",
+    "ai_rag_info.embedded",
+    "ai_rag_info.extend",
+    "ai_rag_info.testing",
+    "ai_rag_info.client",
+    "ai_rag_info.errors",
+    "ai_rag_info.models",
+    "ai_rag_info._backend",
+    "ai_rag_info._compat",
+    "ai_rag_info._facade",
+    "ai_rag_info._http",
+    "ai_rag_info._sse",
+    "ai_rag_info._sync",
+    "ai_rag_info._version",
+]
+forbidden_modules = ["docx"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "easyocr is imported only by src.parsing"
+type = "forbidden"
+source_modules = [
+    "src.api",
+    "src.application",
+    "src.chat",
+    "src.chunking",
+    "src.cli",
+    "src.contracts",
+    "src.core.bootstrap",
+    "src.core.config",
+    "src.core.container",
+    "src.core.errors",
+    "src.core.kinds",
+    "src.core.logger",
+    "src.core.registry",
+    "src.core.specs",
+    "src.core.types",
+    "src.evaluation",
+    "src.indexing",
+    "src.ingestion",
+    "src.jobs",
+    "src.mcp_server",
+    "src.models",
+    "src.ports",
+    "src.retrieval",
+    "src.runtime",
+    "src.worker",
+    "ai_rag_info.embedded",
+    "ai_rag_info.extend",
+    "ai_rag_info.testing",
+    "ai_rag_info.client",
+    "ai_rag_info.errors",
+    "ai_rag_info.models",
+    "ai_rag_info._backend",
+    "ai_rag_info._compat",
+    "ai_rag_info._facade",
+    "ai_rag_info._http",
+    "ai_rag_info._sse",
+    "ai_rag_info._sync",
+    "ai_rag_info._version",
+]
+forbidden_modules = ["easyocr"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "elasticsearch is imported only by src.indexing"
+type = "forbidden"
+source_modules = [
+    "src.api",
+    "src.application",
+    "src.chat",
+    "src.chunking",
+    "src.cli",
+    "src.contracts",
+    "src.core.bootstrap",
+    "src.core.config",
+    "src.core.container",
+    "src.core.errors",
+    "src.core.kinds",
+    "src.core.logger",
+    "src.core.registry",
+    "src.core.specs",
+    "src.core.types",
+    "src.evaluation",
+    "src.ingestion",
+    "src.jobs",
+    "src.mcp_server",
+    "src.models",
+    "src.parsing",
+    "src.ports",
+    "src.retrieval",
+    "src.runtime",
+    "src.worker",
+    "ai_rag_info.embedded",
+    "ai_rag_info.extend",
+    "ai_rag_info.testing",
+    "ai_rag_info.client",
+    "ai_rag_info.errors",
+    "ai_rag_info.models",
+    "ai_rag_info._backend",
+    "ai_rag_info._compat",
+    "ai_rag_info._facade",
+    "ai_rag_info._http",
+    "ai_rag_info._sse",
+    "ai_rag_info._sync",
+    "ai_rag_info._version",
+]
+forbidden_modules = ["elasticsearch"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "fastapi is imported only by src.api, src.mcp_server"
+type = "forbidden"
+source_modules = [
+    "src.application",
+    "src.chat",
+    "src.chunking",
+    "src.cli",
+    "src.contracts",
+    "src.core.bootstrap",
+    "src.core.config",
+    "src.core.container",
+    "src.core.errors",
+    "src.core.kinds",
+    "src.core.logger",
+    "src.core.registry",
+    "src.core.specs",
+    "src.core.types",
+    "src.evaluation",
+    "src.indexing",
+    "src.ingestion",
+    "src.jobs",
+    "src.models",
+    "src.parsing",
+    "src.ports",
+    "src.retrieval",
+    "src.runtime",
+    "src.worker",
+    "ai_rag_info.embedded",
+    "ai_rag_info.extend",
+    "ai_rag_info.testing",
+    "ai_rag_info.client",
+    "ai_rag_info.errors",
+    "ai_rag_info.models",
+    "ai_rag_info._backend",
+    "ai_rag_info._compat",
+    "ai_rag_info._facade",
+    "ai_rag_info._http",
+    "ai_rag_info._sse",
+    "ai_rag_info._sync",
+    "ai_rag_info._version",
+]
+forbidden_modules = ["fastapi"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "langchain_core is imported only by src.models"
+type = "forbidden"
+source_modules = [
+    "src.api",
+    "src.application",
+    "src.chat",
+    "src.chunking",
+    "src.cli",
+    "src.contracts",
+    "src.core.bootstrap",
+    "src.core.config",
+    "src.core.container",
+    "src.core.errors",
+    "src.core.kinds",
+    "src.core.logger",
+    "src.core.registry",
+    "src.core.specs",
+    "src.core.types",
+    "src.evaluation",
+    "src.indexing",
+    "src.ingestion",
+    "src.jobs",
+    "src.mcp_server",
+    "src.parsing",
+    "src.ports",
+    "src.retrieval",
+    "src.runtime",
+    "src.worker",
+    "ai_rag_info.embedded",
+    "ai_rag_info.extend",
+    "ai_rag_info.testing",
+    "ai_rag_info.client",
+    "ai_rag_info.errors",
+    "ai_rag_info.models",
+    "ai_rag_info._backend",
+    "ai_rag_info._compat",
+    "ai_rag_info._facade",
+    "ai_rag_info._http",
+    "ai_rag_info._sse",
+    "ai_rag_info._sync",
+    "ai_rag_info._version",
+]
+forbidden_modules = ["langchain_core"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "langchain_openai is imported only by src.models"
+type = "forbidden"
+source_modules = [
+    "src.api",
+    "src.application",
+    "src.chat",
+    "src.chunking",
+    "src.cli",
+    "src.contracts",
+    "src.core.bootstrap",
+    "src.core.config",
+    "src.core.container",
+    "src.core.errors",
+    "src.core.kinds",
+    "src.core.logger",
+    "src.core.registry",
+    "src.core.specs",
+    "src.core.types",
+    "src.evaluation",
+    "src.indexing",
+    "src.ingestion",
+    "src.jobs",
+    "src.mcp_server",
+    "src.parsing",
+    "src.ports",
+    "src.retrieval",
+    "src.runtime",
+    "src.worker",
+    "ai_rag_info.embedded",
+    "ai_rag_info.extend",
+    "ai_rag_info.testing",
+    "ai_rag_info.client",
+    "ai_rag_info.errors",
+    "ai_rag_info.models",
+    "ai_rag_info._backend",
+    "ai_rag_info._compat",
+    "ai_rag_info._facade",
+    "ai_rag_info._http",
+    "ai_rag_info._sse",
+    "ai_rag_info._sync",
+    "ai_rag_info._version",
+]
+forbidden_modules = ["langchain_openai"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "langchain_text_splitters is imported only by src.chunking"
+type = "forbidden"
+source_modules = [
+    "src.api",
+    "src.application",
+    "src.chat",
+    "src.cli",
+    "src.contracts",
+    "src.core.bootstrap",
+    "src.core.config",
+    "src.core.container",
+    "src.core.errors",
+    "src.core.kinds",
+    "src.core.logger",
+    "src.core.registry",
+    "src.core.specs",
+    "src.core.types",
+    "src.evaluation",
+    "src.indexing",
+    "src.ingestion",
+    "src.jobs",
+    "src.mcp_server",
+    "src.models",
+    "src.parsing",
+    "src.ports",
+    "src.retrieval",
+    "src.runtime",
+    "src.worker",
+    "ai_rag_info.embedded",
+    "ai_rag_info.extend",
+    "ai_rag_info.testing",
+    "ai_rag_info.client",
+    "ai_rag_info.errors",
+    "ai_rag_info.models",
+    "ai_rag_info._backend",
+    "ai_rag_info._compat",
+    "ai_rag_info._facade",
+    "ai_rag_info._http",
+    "ai_rag_info._sse",
+    "ai_rag_info._sync",
+    "ai_rag_info._version",
+]
+forbidden_modules = ["langchain_text_splitters"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "mcp is imported only by src.mcp_server"
+type = "forbidden"
+source_modules = [
+    "src.api",
+    "src.application",
+    "src.chat",
+    "src.chunking",
+    "src.cli",
+    "src.contracts",
+    "src.core.bootstrap",
+    "src.core.config",
+    "src.core.container",
+    "src.core.errors",
+    "src.core.kinds",
+    "src.core.logger",
+    "src.core.registry",
+    "src.core.specs",
+    "src.core.types",
+    "src.evaluation",
+    "src.indexing",
+    "src.ingestion",
+    "src.jobs",
+    "src.models",
+    "src.parsing",
+    "src.ports",
+    "src.retrieval",
+    "src.runtime",
+    "src.worker",
+    "ai_rag_info.embedded",
+    "ai_rag_info.extend",
+    "ai_rag_info.testing",
+    "ai_rag_info.client",
+    "ai_rag_info.errors",
+    "ai_rag_info.models",
+    "ai_rag_info._backend",
+    "ai_rag_info._compat",
+    "ai_rag_info._facade",
+    "ai_rag_info._http",
+    "ai_rag_info._sse",
+    "ai_rag_info._sync",
+    "ai_rag_info._version",
+]
+forbidden_modules = ["mcp"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "numpy is imported only by src.parsing"
+type = "forbidden"
+source_modules = [
+    "src.api",
+    "src.application",
+    "src.chat",
+    "src.chunking",
+    "src.cli",
+    "src.contracts",
+    "src.core.bootstrap",
+    "src.core.config",
+    "src.core.container",
+    "src.core.errors",
+    "src.core.kinds",
+    "src.core.logger",
+    "src.core.registry",
+    "src.core.specs",
+    "src.core.types",
+    "src.evaluation",
+    "src.indexing",
+    "src.ingestion",
+    "src.jobs",
+    "src.mcp_server",
+    "src.models",
+    "src.ports",
+    "src.retrieval",
+    "src.runtime",
+    "src.worker",
+    "ai_rag_info.embedded",
+    "ai_rag_info.extend",
+    "ai_rag_info.testing",
+    "ai_rag_info.client",
+    "ai_rag_info.errors",
+    "ai_rag_info.models",
+    "ai_rag_info._backend",
+    "ai_rag_info._compat",
+    "ai_rag_info._facade",
+    "ai_rag_info._http",
+    "ai_rag_info._sse",
+    "ai_rag_info._sync",
+    "ai_rag_info._version",
+]
+forbidden_modules = ["numpy"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "openpyxl is imported only by src.parsing"
+type = "forbidden"
+source_modules = [
+    "src.api",
+    "src.application",
+    "src.chat",
+    "src.chunking",
+    "src.cli",
+    "src.contracts",
+    "src.core.bootstrap",
+    "src.core.config",
+    "src.core.container",
+    "src.core.errors",
+    "src.core.kinds",
+    "src.core.logger",
+    "src.core.registry",
+    "src.core.specs",
+    "src.core.types",
+    "src.evaluation",
+    "src.indexing",
+    "src.ingestion",
+    "src.jobs",
+    "src.mcp_server",
+    "src.models",
+    "src.ports",
+    "src.retrieval",
+    "src.runtime",
+    "src.worker",
+    "ai_rag_info.embedded",
+    "ai_rag_info.extend",
+    "ai_rag_info.testing",
+    "ai_rag_info.client",
+    "ai_rag_info.errors",
+    "ai_rag_info.models",
+    "ai_rag_info._backend",
+    "ai_rag_info._compat",
+    "ai_rag_info._facade",
+    "ai_rag_info._http",
+    "ai_rag_info._sse",
+    "ai_rag_info._sync",
+    "ai_rag_info._version",
+]
+forbidden_modules = ["openpyxl"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "prometheus_client is imported only by src.api, src.runtime, src.worker"
+type = "forbidden"
+source_modules = [
+    "src.application",
+    "src.chat",
+    "src.chunking",
+    "src.cli",
+    "src.contracts",
+    "src.core.bootstrap",
+    "src.core.config",
+    "src.core.container",
+    "src.core.errors",
+    "src.core.kinds",
+    "src.core.logger",
+    "src.core.registry",
+    "src.core.specs",
+    "src.core.types",
+    "src.evaluation",
+    "src.indexing",
+    "src.ingestion",
+    "src.jobs",
+    "src.mcp_server",
+    "src.models",
+    "src.parsing",
+    "src.ports",
+    "src.retrieval",
+    "ai_rag_info.embedded",
+    "ai_rag_info.extend",
+    "ai_rag_info.testing",
+    "ai_rag_info.client",
+    "ai_rag_info.errors",
+    "ai_rag_info.models",
+    "ai_rag_info._backend",
+    "ai_rag_info._compat",
+    "ai_rag_info._facade",
+    "ai_rag_info._http",
+    "ai_rag_info._sse",
+    "ai_rag_info._sync",
+    "ai_rag_info._version",
+]
+forbidden_modules = ["prometheus_client"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "pydantic_settings is imported only by src.core.config"
+type = "forbidden"
+source_modules = [
+    "src.api",
+    "src.application",
+    "src.chat",
+    "src.chunking",
+    "src.cli",
+    "src.contracts",
+    "src.core.bootstrap",
+    "src.core.container",
+    "src.core.errors",
+    "src.core.kinds",
+    "src.core.logger",
+    "src.core.registry",
+    "src.core.specs",
+    "src.core.types",
+    "src.evaluation",
+    "src.indexing",
+    "src.ingestion",
+    "src.jobs",
+    "src.mcp_server",
+    "src.models",
+    "src.parsing",
+    "src.ports",
+    "src.retrieval",
+    "src.runtime",
+    "src.worker",
+    "ai_rag_info.embedded",
+    "ai_rag_info.extend",
+    "ai_rag_info.testing",
+    "ai_rag_info.client",
+    "ai_rag_info.errors",
+    "ai_rag_info.models",
+    "ai_rag_info._backend",
+    "ai_rag_info._compat",
+    "ai_rag_info._facade",
+    "ai_rag_info._http",
+    "ai_rag_info._sse",
+    "ai_rag_info._sync",
+    "ai_rag_info._version",
+]
+forbidden_modules = ["pydantic_settings"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "pymupdf is imported only by src.parsing"
+type = "forbidden"
+source_modules = [
+    "src.api",
+    "src.application",
+    "src.chat",
+    "src.chunking",
+    "src.cli",
+    "src.contracts",
+    "src.core.bootstrap",
+    "src.core.config",
+    "src.core.container",
+    "src.core.errors",
+    "src.core.kinds",
+    "src.core.logger",
+    "src.core.registry",
+    "src.core.specs",
+    "src.core.types",
+    "src.evaluation",
+    "src.indexing",
+    "src.ingestion",
+    "src.jobs",
+    "src.mcp_server",
+    "src.models",
+    "src.ports",
+    "src.retrieval",
+    "src.runtime",
+    "src.worker",
+    "ai_rag_info.embedded",
+    "ai_rag_info.extend",
+    "ai_rag_info.testing",
+    "ai_rag_info.client",
+    "ai_rag_info.errors",
+    "ai_rag_info.models",
+    "ai_rag_info._backend",
+    "ai_rag_info._compat",
+    "ai_rag_info._facade",
+    "ai_rag_info._http",
+    "ai_rag_info._sse",
+    "ai_rag_info._sync",
+    "ai_rag_info._version",
+]
+forbidden_modules = ["pymupdf"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "redis is imported only by src.chat, src.jobs, src.runtime"
+type = "forbidden"
+source_modules = [
+    "src.api",
+    "src.application",
+    "src.chunking",
+    "src.cli",
+    "src.contracts",
+    "src.core.bootstrap",
+    "src.core.config",
+    "src.core.container",
+    "src.core.errors",
+    "src.core.kinds",
+    "src.core.logger",
+    "src.core.registry",
+    "src.core.specs",
+    "src.core.types",
+    "src.evaluation",
+    "src.indexing",
+    "src.ingestion",
+    "src.mcp_server",
+    "src.models",
+    "src.parsing",
+    "src.ports",
+    "src.retrieval",
+    "src.worker",
+    "ai_rag_info.embedded",
+    "ai_rag_info.extend",
+    "ai_rag_info.testing",
+    "ai_rag_info.client",
+    "ai_rag_info.errors",
+    "ai_rag_info.models",
+    "ai_rag_info._backend",
+    "ai_rag_info._compat",
+    "ai_rag_info._facade",
+    "ai_rag_info._http",
+    "ai_rag_info._sse",
+    "ai_rag_info._sync",
+    "ai_rag_info._version",
+]
+forbidden_modules = ["redis"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "sklearn is imported only by src.chunking"
+type = "forbidden"
+source_modules = [
+    "src.api",
+    "src.application",
+    "src.chat",
+    "src.cli",
+    "src.contracts",
+    "src.core.bootstrap",
+    "src.core.config",
+    "src.core.container",
+    "src.core.errors",
+    "src.core.kinds",
+    "src.core.logger",
+    "src.core.registry",
+    "src.core.specs",
+    "src.core.types",
+    "src.evaluation",
+    "src.indexing",
+    "src.ingestion",
+    "src.jobs",
+    "src.mcp_server",
+    "src.models",
+    "src.parsing",
+    "src.ports",
+    "src.retrieval",
+    "src.runtime",
+    "src.worker",
+    "ai_rag_info.embedded",
+    "ai_rag_info.extend",
+    "ai_rag_info.testing",
+    "ai_rag_info.client",
+    "ai_rag_info.errors",
+    "ai_rag_info.models",
+    "ai_rag_info._backend",
+    "ai_rag_info._compat",
+    "ai_rag_info._facade",
+    "ai_rag_info._http",
+    "ai_rag_info._sse",
+    "ai_rag_info._sync",
+    "ai_rag_info._version",
+]
+forbidden_modules = ["sklearn"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "starlette is imported only by src.api"
+type = "forbidden"
+source_modules = [
+    "src.application",
+    "src.chat",
+    "src.chunking",
+    "src.cli",
+    "src.contracts",
+    "src.core.bootstrap",
+    "src.core.config",
+    "src.core.container",
+    "src.core.errors",
+    "src.core.kinds",
+    "src.core.logger",
+    "src.core.registry",
+    "src.core.specs",
+    "src.core.types",
+    "src.evaluation",
+    "src.indexing",
+    "src.ingestion",
+    "src.jobs",
+    "src.mcp_server",
+    "src.models",
+    "src.parsing",
+    "src.ports",
+    "src.retrieval",
+    "src.runtime",
+    "src.worker",
+    "ai_rag_info.embedded",
+    "ai_rag_info.extend",
+    "ai_rag_info.testing",
+    "ai_rag_info.client",
+    "ai_rag_info.errors",
+    "ai_rag_info.models",
+    "ai_rag_info._backend",
+    "ai_rag_info._compat",
+    "ai_rag_info._facade",
+    "ai_rag_info._http",
+    "ai_rag_info._sse",
+    "ai_rag_info._sync",
+    "ai_rag_info._version",
+]
+forbidden_modules = ["starlette"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "torch is imported only by src.parsing"
+type = "forbidden"
+source_modules = [
+    "src.api",
+    "src.application",
+    "src.chat",
+    "src.chunking",
+    "src.cli",
+    "src.contracts",
+    "src.core.bootstrap",
+    "src.core.config",
+    "src.core.container",
+    "src.core.errors",
+    "src.core.kinds",
+    "src.core.logger",
+    "src.core.registry",
+    "src.core.specs",
+    "src.core.types",
+    "src.evaluation",
+    "src.indexing",
+    "src.ingestion",
+    "src.jobs",
+    "src.mcp_server",
+    "src.models",
+    "src.ports",
+    "src.retrieval",
+    "src.runtime",
+    "src.worker",
+    "ai_rag_info.embedded",
+    "ai_rag_info.extend",
+    "ai_rag_info.testing",
+    "ai_rag_info.client",
+    "ai_rag_info.errors",
+    "ai_rag_info.models",
+    "ai_rag_info._backend",
+    "ai_rag_info._compat",
+    "ai_rag_info._facade",
+    "ai_rag_info._http",
+    "ai_rag_info._sse",
+    "ai_rag_info._sync",
+    "ai_rag_info._version",
+]
+forbidden_modules = ["torch"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "typer is imported only by src.cli"
+type = "forbidden"
+source_modules = [
+    "src.api",
+    "src.application",
+    "src.chat",
+    "src.chunking",
+    "src.contracts",
+    "src.core.bootstrap",
+    "src.core.config",
+    "src.core.container",
+    "src.core.errors",
+    "src.core.kinds",
+    "src.core.logger",
+    "src.core.registry",
+    "src.core.specs",
+    "src.core.types",
+    "src.evaluation",
+    "src.indexing",
+    "src.ingestion",
+    "src.jobs",
+    "src.mcp_server",
+    "src.models",
+    "src.parsing",
+    "src.ports",
+    "src.retrieval",
+    "src.runtime",
+    "src.worker",
+    "ai_rag_info.embedded",
+    "ai_rag_info.extend",
+    "ai_rag_info.testing",
+    "ai_rag_info.client",
+    "ai_rag_info.errors",
+    "ai_rag_info.models",
+    "ai_rag_info._backend",
+    "ai_rag_info._compat",
+    "ai_rag_info._facade",
+    "ai_rag_info._http",
+    "ai_rag_info._sse",
+    "ai_rag_info._sync",
+    "ai_rag_info._version",
+]
+forbidden_modules = ["typer"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "uvicorn is imported only by src.api"
+type = "forbidden"
+source_modules = [
+    "src.application",
+    "src.chat",
+    "src.chunking",
+    "src.cli",
+    "src.contracts",
+    "src.core.bootstrap",
+    "src.core.config",
+    "src.core.container",
+    "src.core.errors",
+    "src.core.kinds",
+    "src.core.logger",
+    "src.core.registry",
+    "src.core.specs",
+    "src.core.types",
+    "src.evaluation",
+    "src.indexing",
+    "src.ingestion",
+    "src.jobs",
+    "src.mcp_server",
+    "src.models",
+    "src.parsing",
+    "src.ports",
+    "src.retrieval",
+    "src.runtime",
+    "src.worker",
+    "ai_rag_info.embedded",
+    "ai_rag_info.extend",
+    "ai_rag_info.testing",
+    "ai_rag_info.client",
+    "ai_rag_info.errors",
+    "ai_rag_info.models",
+    "ai_rag_info._backend",
+    "ai_rag_info._compat",
+    "ai_rag_info._facade",
+    "ai_rag_info._http",
+    "ai_rag_info._sse",
+    "ai_rag_info._sync",
+    "ai_rag_info._version",
+]
+forbidden_modules = ["uvicorn"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "watchdog is imported only by src.ingestion"
+type = "forbidden"
+source_modules = [
+    "src.api",
+    "src.application",
+    "src.chat",
+    "src.chunking",
+    "src.cli",
+    "src.contracts",
+    "src.core.bootstrap",
+    "src.core.config",
+    "src.core.container",
+    "src.core.errors",
+    "src.core.kinds",
+    "src.core.logger",
+    "src.core.registry",
+    "src.core.specs",
+    "src.core.types",
+    "src.evaluation",
+    "src.indexing",
+    "src.jobs",
+    "src.mcp_server",
+    "src.models",
+    "src.parsing",
+    "src.ports",
+    "src.retrieval",
+    "src.runtime",
+    "src.worker",
+    "ai_rag_info.embedded",
+    "ai_rag_info.extend",
+    "ai_rag_info.testing",
+    "ai_rag_info.client",
+    "ai_rag_info.errors",
+    "ai_rag_info.models",
+    "ai_rag_info._backend",
+    "ai_rag_info._compat",
+    "ai_rag_info._facade",
+    "ai_rag_info._http",
+    "ai_rag_info._sse",
+    "ai_rag_info._sync",
+    "ai_rag_info._version",
+]
+forbidden_modules = ["watchdog"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "The thin client imports nothing of the engine, directly or indirectly"
+type = "forbidden"
+source_modules = [
+    "ai_rag_info.client",
+    "ai_rag_info.errors",
+    "ai_rag_info.models",
+    "ai_rag_info._backend",
+    "ai_rag_info._compat",
+    "ai_rag_info._facade",
+    "ai_rag_info._http",
+    "ai_rag_info._sse",
+    "ai_rag_info._sync",
+    "ai_rag_info._version",
+]
+forbidden_modules = [
+    "src.api",
+    "src.application",
+    "src.chat",
+    "src.chunking",
+    "src.cli",
+    "src.core.bootstrap",
+    "src.core.config",
+    "src.core.container",
+    "src.core.registry",
+    "src.core.specs",
+    "src.core.kinds",
+    "src.evaluation",
+    "src.indexing",
+    "src.ingestion",
+    "src.jobs",
+    "src.mcp_server",
+    "src.models",
+    "src.parsing",
+    "src.ports",
+    "src.retrieval",
+    "src.runtime",
+    "src.worker",
+    "cv2",
+    "docx",
+    "easyocr",
+    "elasticsearch",
+    "fastapi",
+    "langchain_core",
+    "langchain_openai",
+    "langchain_text_splitters",
+    "mcp",
+    "numpy",
+    "openpyxl",
+    "prometheus_client",
+    "pydantic_settings",
+    "pymupdf",
+    "redis",
+    "sklearn",
+    "starlette",
+    "torch",
+    "typer",
+    "uvicorn",
+    "watchdog",
+    "transformers",
+    "pandas",
+    "PIL",
+]
+
+
+[[tool.importlinter.contracts]]
+name = "Domain values, ports and the wire contract depend on no framework or adapter"
+type = "forbidden"
+source_modules = [
+    "src.core.types",
+    "src.core.errors",
+    "src.core.kinds",
+    "src.core.specs",
+    "src.core.registry",
+    "src.ports",
+    "src.contracts",
+]
+forbidden_modules = [
+    "cv2",
+    "docx",
+    "easyocr",
+    "elasticsearch",
+    "fastapi",
+    "langchain_core",
+    "langchain_openai",
+    "langchain_text_splitters",
+    "mcp",
+    "numpy",
+    "openpyxl",
+    "prometheus_client",
+    "pydantic_settings",
+    "pymupdf",
+    "redis",
+    "sklearn",
+    "starlette",
+    "torch",
+    "typer",
+    "uvicorn",
+    "watchdog",
+    "transformers",
+    "pandas",
+    "PIL",
+    "httpx",
+]
+
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -87,6 +1203,7 @@ markers = [
     "integration: needs a live Elasticsearch (see tests/conftest.py for the URLs)",
     "needs_redis: additionally needs a live Redis",
     "ocr: needs EasyOCR model weights (downloaded on first use)",
+    "packaging: builds the wheel and installs it into a clean virtualenv (slow; needs uv)",
 ]
 addopts = "-ra"
 
@@ -101,11 +1218,24 @@ ignore = ["E501", "B008", "RUF012"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["B", "SIM", "RUF", "ASYNC"]
-# Carried over unchanged; the Devanagari digit in the correction table is intentional.
-"src/parsing/ocr/cleanup.py" = ["RUF001", "SIM108", "SIM114"]
+# `timeout` here is an HTTP request setting (passed to httpx), not an asyncio.timeout() scope
+"ai_rag_info/*" = ["ASYNC109"]
+# the engine-availability check must run before the engine imports, to give an install hint instead of a bare ModuleNotFoundError
+"ai_rag_info/embedded.py" = ["E402"]
 
 [tool.mypy]
 python_version = "3.12"
 ignore_missing_imports = true
 warn_unused_ignores = true
 check_untyped_defs = true
+
+# The public package is held to strict typing (docs/framework.md, section 6): its interface is the contract.
+[[tool.mypy.overrides]]
+module = "ai_rag_info.*"
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+disallow_untyped_calls = true
+disallow_any_generics = true
+no_implicit_reexport = true
+warn_return_any = true
+strict_equality = true

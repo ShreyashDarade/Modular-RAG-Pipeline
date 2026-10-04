@@ -9,13 +9,14 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from src.chat.answer import AnswerService
 from src.chat.service import ChatService
 from src.core.bootstrap import build_registries
 from src.core.config import Settings, load_rag_config
-from src.core.errors import ConfigError
+from src.core.errors import ConfigError, InvalidRequestError
 from src.core.logger import logger
 from src.core.registry import Registries
 from src.core.specs import RagConfig
@@ -31,7 +32,8 @@ from src.ingestion.service import IngestionService
 from src.ingestion.storage import DataStore
 from src.models.registry import ModelRegistry
 from src.parsing.registry import ParserSet
-from src.ports.indexing import IndexSpec
+from src.ports.indexing import IndexSpec, Searcher
+from src.ports.retrieval import Reranker
 from src.ports.runtime import Cache, ConversationStore, JobBackend, RateLimiter
 from src.retrieval.hybrid import HybridRetriever
 from src.retrieval.pipeline import RetrievalPipeline
@@ -46,6 +48,7 @@ Role = Literal["api", "worker", "cli", "mcp"]
 @dataclass
 class Container:
     settings: Settings
+    role: Role
     config: RagConfig
     registries: Registries
     cache: Cache
@@ -53,8 +56,10 @@ class Container:
     models: ModelRegistry
     elastic: ElasticConnection
     writer: ElasticIndexWriter
+    searcher: Searcher
     jobs: JobBackend
     conversations: ConversationStore
+    reranker: Reranker
     retrieval: RetrievalPipeline
     answers: AnswerService
     chat: ChatService
@@ -80,7 +85,7 @@ class Container:
         registries = registries or build_registries(settings)
         config = config or load_rag_config(settings)
         cache = registries.caches.create(settings.cache_backend, settings)
-        corpus = CorpusVersion(cache)
+        corpus = CorpusVersion(cache, settle_seconds=settings.search_settle_seconds)
         models = ModelRegistry(config, settings, registries, query_cache=cache)
 
         elastic = ElasticConnection(settings)
@@ -91,17 +96,19 @@ class Container:
         expander = registries.query_expanders.create(
             config.query_expander, settings, models.chat(config.utility_model), cache
         )
-        reranker = registries.rerankers.create(config.reranker, settings)
-        retriever = HybridRetriever(
-            searcher=searcher, models=models, config=config, reranker=reranker, settings=settings
+        reranker_spec = config.reranker_spec()
+        reranker = registries.rerankers.create(
+            reranker_spec.provider, config.reranker, reranker_spec, settings
         )
+        retriever = HybridRetriever(searcher=searcher, models=models, config=config, settings=settings)
         retrieval = RetrievalPipeline(
             expander=expander,
             retriever=retriever,
+            reranker=reranker,
             cache=CachedCall(cache, "retrieval"),
             corpus=corpus,
             settings=settings,
-            fingerprint=f"{config.query_expander}/{config.reranker}/{config.utility_model}",
+            fingerprint=f"{config.query_expander}/{config.utility_model}/{reranker_spec.model_dump_json()}",
         )
         answers = AnswerService(retrieval=retrieval, models=models, settings=settings)
         conversations = registries.conversation_stores.create(settings.chat_store, settings)
@@ -123,6 +130,7 @@ class Container:
         )
         container = cls(
             settings=settings,
+            role=role,
             config=config,
             registries=registries,
             cache=cache,
@@ -130,8 +138,10 @@ class Container:
             models=models,
             elastic=elastic,
             writer=writer,
+            searcher=searcher,
             jobs=jobs,
             conversations=conversations,
+            reranker=reranker,
             retrieval=retrieval,
             answers=answers,
             chat=chat,
@@ -141,7 +151,7 @@ class Container:
             rate_limiter=limiter,
         )
         container._closers = [
-            *(c.close for c in (cache, conversations, jobs)),
+            *(c.close for c in (cache, conversations, jobs, reranker)),
             *([limiter.close] if limiter else []),
             elastic.close,
         ]
@@ -161,7 +171,7 @@ class Container:
         except ImportError as exc:
             raise ConfigError(
                 "this process is configured to run ingestion but the worker dependencies are not installed: "
-                "pip install 'turinton-rag[worker]', or set INGEST_EMBEDDED_WORKER=false and run `rag-worker` separately"
+                "pip install 'ai-rag-info[worker]', or set INGEST_EMBEDDED_WORKER=false and run `rag-worker` separately"
             ) from exc
         from src.ingestion.ocr import LazyOcr
 
@@ -195,14 +205,30 @@ class Container:
         specs: list[IndexSpec] = [IndexSpec(self.settings.es_index_registry, None)]
         for collection in self.config.collections.values():
             dims = self.models.embedder(collection.embedding_model).dimensions
-            specs += [IndexSpec(name, dims) for name in collection.index_names().values()]
+            specs += [
+                IndexSpec(
+                    name,
+                    dims,
+                    shards=collection.shards,
+                    replicas=collection.replicas,
+                    vector_index_type=collection.vector_index_type,
+                )
+                for name in collection.index_names().values()
+            ]
         await self.writer.ensure_indices(specs)
         await self.jobs.start()
+        if self.role in (
+            "api",
+            "mcp",
+        ):  # serving processes fail fast; ingest/delete/eval load it only if used
+            await self.reranker.start()
 
     async def start_watchers(self) -> None:
         if not (self.settings.watch_data_dir and self.ingestion):
             return
-        extensions = self.ingestion._parsers.extensions
+        from src.ingestion.watcher import DataDirectoryWatcher
+
+        extensions = self.parsers.extensions
         for name, collection in self.config.collections.items():
 
             async def submit(path, _name=name) -> None:
@@ -216,6 +242,10 @@ class Container:
 
     async def handle_job(self, spec: JobSpec) -> dict:
         assert self.ingestion is not None, "this process was built without the ingestion stack"
+        # Jobs arrive through a shared queue: whoever can write to it must not be able to make a worker
+        # read arbitrary files. (Direct CLI ingestion does not go through here and may use any path.)
+        if not await asyncio.to_thread(self.store.within_data_dir, Path(spec.path)):
+            raise InvalidRequestError(f"refusing to ingest a path outside the data directory: {spec.path}")
         return (await self.ingestion.ingest(spec)).to_dict()
 
     def start_embedded_worker(self, stop: asyncio.Event) -> asyncio.Task[None]:

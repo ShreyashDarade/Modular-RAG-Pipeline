@@ -132,11 +132,12 @@ class RetrievedDocument:
     collection: str
     kind: ContentKind
     index: str
-    rerank_score: float = 0.0
+    #: Set by the reranker; ``None`` until then (a legitimate score may be 0.0 or negative).
+    rerank_score: float | None = None
 
     @property
     def final_score(self) -> float:
-        return self.rerank_score or self.score
+        return self.score if self.rerank_score is None else self.rerank_score
 
 
 @dataclass(slots=True)

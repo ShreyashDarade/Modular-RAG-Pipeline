@@ -116,3 +116,48 @@ async def test_unsupported_ocr_language_is_rejected_not_defaulted(ocr_container:
         await ocr_container.ingestion.ingest(
             JobSpec(collection="alpha", path=str(image), image_language="fr")
         )
+
+
+# --- Hindi: real Devanagari weights, a correctly shaped rendering, then through the whole pipeline ---
+FONT_DIR = Path("/usr/share/fonts/truetype/freefont")
+HINDI = ["वित्तीय वर्ष की पहली तिमाही में राजस्व बारह प्रतिशत बढ़ा।", "संचालन मार्जिन अठारह प्रतिशत तक सुधरा।"]
+
+
+def render_hindi() -> bytes:
+    import pymupdf
+
+    html = "".join(f'<p style="font-size:34px;font-family:FreeSerif">{line}</p>' for line in HINDI)
+    page = pymupdf.open().new_page(width=900, height=260)
+    page.insert_htmlbox(  # HarfBuzz shaping: conjuncts and vowel signs come out right
+        pymupdf.Rect(30, 20, 870, 240),
+        html,
+        css="@font-face{font-family:FreeSerif;src:url(FreeSerif.ttf);}",
+        archive=pymupdf.Archive(str(FONT_DIR)),
+    )
+    return page.get_pixmap(dpi=200).tobytes("png")
+
+
+@pytest.mark.skipif(
+    not (MODELS / "devanagari.pth").exists() or not (FONT_DIR / "FreeSerif.ttf").exists(),
+    reason="needs the Devanagari OCR weights and a Devanagari font",
+)
+async def test_hindi_image_is_recognised_identified_and_searchable(ocr_container: Container, tmp_path: Path):
+    import difflib
+
+    image = tmp_path / "hindi.png"
+    image.write_bytes(render_hindi())
+    summary = await ocr_container.ingestion.ingest(
+        JobSpec(collection="alpha", path=str(image))
+    )  # language: auto-detect
+    assert summary.image_chunks >= 1
+
+    result = await ocr_container.retrieval.retrieve(
+        "पहली तिमाही में", ocr_container.retrieval.scope(["alpha"], ["image"])
+    )
+    top = result.documents[0]
+    assert top.metadata["language"] in ("hi", "mr") and top.kind == "image"
+    similarity = difflib.SequenceMatcher(None, " ".join(HINDI), top.content.replace("\n", " ")).ratio()
+    assert similarity > 0.9, f"Hindi OCR text too far from the original ({similarity:.2f}): {top.content!r}"
+    assert "अठारह" in top.content, (
+        "danda, conjuncts and matras survive OCR, cleanup, indexing and lexical search"
+    )

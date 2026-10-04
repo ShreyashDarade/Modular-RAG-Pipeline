@@ -277,6 +277,7 @@ async def test_cached_retrievals_are_keyed_by_the_settings_that_shape_them():
     from src.core.config import Settings
     from src.core.types import RetrievalScope
     from src.retrieval.pipeline import RetrievalPipeline
+    from src.retrieval.rerank import IdentityReranker
     from src.runtime.cache import CachedCall, CorpusVersion, MemoryCache
 
     class Retriever:
@@ -301,6 +302,7 @@ async def test_cached_retrievals_are_keyed_by_the_settings_that_shape_them():
         pipeline = RetrievalPipeline(
             expander=Expander(),
             retriever=Retriever(),
+            reranker=IdentityReranker(),
             cache=CachedCall(shared, "t"),
             corpus=CorpusVersion(shared),
             settings=Settings(_env_file=None, hybrid_alpha=alpha),

@@ -44,11 +44,15 @@ cffi==2.1.1 ; platform_python_implementation != 'PyPy'
 charset-normalizer==3.5.2
     # via requests
 click==8.5.0
-    # via uvicorn
+    # via
+    #   huggingface-hub
+    #   uvicorn
 cloudpickle==3.1.2
     # via joblib
 colorama==0.4.6 ; sys_platform == 'win32'
-    # via typer
+    # via
+    #   tqdm
+    #   typer
 cryptography==50.0.2
     # via
     #   google-auth
@@ -66,17 +70,19 @@ distro==1.9.0
 docstring-parser==0.18.0
     # via anthropic
 easyocr==1.7.2
-    # via turinton-rag (pyproject.toml)
+    # via ai-rag-info (pyproject.toml)
 elastic-transport==9.4.2
     # via elasticsearch
 elasticsearch==9.5.1
-    # via turinton-rag (pyproject.toml)
+    # via ai-rag-info (pyproject.toml)
 et-xmlfile==2.0.0
     # via openpyxl
 fastapi==0.142.2
-    # via turinton-rag (pyproject.toml)
+    # via ai-rag-info (pyproject.toml)
 filelock==4.0.10
-    # via torch
+    # via
+    #   huggingface-hub
+    #   torch
 filetype==1.2.0
     # via langchain-google-genai
 frozenlist==1.8.0
@@ -84,7 +90,9 @@ frozenlist==1.8.0
     #   aiohttp
     #   aiosignal
 fsspec==2026.9.0
-    # via torch
+    # via
+    #   huggingface-hub
+    #   torch
 google-auth==2.59.1
     # via google-genai
 google-genai==2.28.0
@@ -94,6 +102,8 @@ h11==0.16.0
     #   httpcore
     #   httpcore2
     #   uvicorn
+hf-xet==1.6.0 ; platform_machine == 'AMD64' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'arm64' or platform_machine == 'x86_64'
+    # via huggingface-hub
 hiredis==3.4.2
     # via redis
 httpcore==1.0.9
@@ -104,7 +114,9 @@ httptools==0.8.0
     # via uvicorn
 httpx==0.28.1
     # via
+    #   ai-rag-info (pyproject.toml)
     #   google-genai
+    #   huggingface-hub
     #   langchain-core
     #   ollama
 httpx2==2.13.1
@@ -115,6 +127,10 @@ httpx2==2.13.1
     #   openai
 httpx2-jsfetch==1.0 ; sys_platform == 'emscripten'
     # via httpx2
+huggingface-hub==1.33.0
+    # via
+    #   tokenizers
+    #   transformers
 idna==3.20
     # via
     #   anyio
@@ -141,27 +157,27 @@ jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
     # via jsonschema
 langchain-anthropic==1.7.5
-    # via turinton-rag (pyproject.toml)
+    # via ai-rag-info (pyproject.toml)
 langchain-core==1.6.6
     # via
-    #   turinton-rag (pyproject.toml)
+    #   ai-rag-info (pyproject.toml)
     #   langchain-anthropic
     #   langchain-google-genai
     #   langchain-ollama
     #   langchain-openai
     #   langchain-text-splitters
 langchain-google-genai==4.4.0
-    # via turinton-rag (pyproject.toml)
+    # via ai-rag-info (pyproject.toml)
 langchain-ollama==1.1.0
-    # via turinton-rag (pyproject.toml)
+    # via ai-rag-info (pyproject.toml)
 langchain-openai==1.6.7
-    # via turinton-rag (pyproject.toml)
+    # via ai-rag-info (pyproject.toml)
 langchain-protocol==0.0.19
     # via langchain-core
 langchain-text-splitters==1.1.3
-    # via turinton-rag (pyproject.toml)
+    # via ai-rag-info (pyproject.toml)
 langdetect==1.0.9
-    # via turinton-rag (pyproject.toml)
+    # via ai-rag-info (pyproject.toml)
 langsmith==0.14.4
     # via langchain-core
 lazy-loader==0.6
@@ -173,7 +189,7 @@ markdown-it-py==4.2.0
 markupsafe==3.0.4
     # via jinja2
 mcp==2.3.0
-    # via turinton-rag (pyproject.toml)
+    # via ai-rag-info (pyproject.toml)
 mcp-types==2.3.0
     # via mcp
 mdurl==0.1.2
@@ -194,7 +210,7 @@ ninja==1.13.2
     # via easyocr
 numpy==2.5.3
     # via
-    #   turinton-rag (pyproject.toml)
+    #   ai-rag-info (pyproject.toml)
     #   easyocr
     #   imageio
     #   opencv-python-headless
@@ -205,6 +221,7 @@ numpy==2.5.3
     #   shapely
     #   tifffile
     #   torchvision
+    #   transformers
 nvidia-cublas==13.1.1.3 ; sys_platform == 'linux'
     # via
     #   cuda-toolkit
@@ -252,10 +269,10 @@ openai==3.24.0
     # via langchain-openai
 opencv-python-headless==5.0.0.93
     # via
-    #   turinton-rag (pyproject.toml)
+    #   ai-rag-info (pyproject.toml)
     #   easyocr
 openpyxl==3.1.5
-    # via turinton-rag (pyproject.toml)
+    # via ai-rag-info (pyproject.toml)
 opentelemetry-api==1.45.0
     # via
     #   fastapi
@@ -264,21 +281,23 @@ orjson==3.12.0 ; platform_python_implementation != 'PyPy'
     # via langsmith
 packaging==26.3
     # via
+    #   huggingface-hub
     #   langchain-core
     #   langsmith
     #   lazy-loader
     #   scikit-image
+    #   transformers
 pandas==3.0.6
-    # via turinton-rag (pyproject.toml)
+    # via ai-rag-info (pyproject.toml)
 pillow==12.3.0
     # via
-    #   turinton-rag (pyproject.toml)
+    #   ai-rag-info (pyproject.toml)
     #   easyocr
     #   imageio
     #   scikit-image
     #   torchvision
 prometheus-client==0.26.0
-    # via turinton-rag (pyproject.toml)
+    # via ai-rag-info (pyproject.toml)
 propcache==0.5.4
     # via
     #   aiohttp
@@ -293,7 +312,7 @@ pycparser==3.0 ; implementation_name != 'PyPy' and platform_python_implementatio
     # via cffi
 pydantic==2.13.5
     # via
-    #   turinton-rag (pyproject.toml)
+    #   ai-rag-info (pyproject.toml)
     #   anthropic
     #   fastapi
     #   google-genai
@@ -309,13 +328,13 @@ pydantic==2.13.5
 pydantic-core==2.46.5
     # via pydantic
 pydantic-settings==2.15.0
-    # via turinton-rag (pyproject.toml)
+    # via ai-rag-info (pyproject.toml)
 pygments==2.21.0
     # via rich
 pyjwt==2.15.1
     # via mcp
 pymupdf==1.28.2
-    # via turinton-rag (pyproject.toml)
+    # via ai-rag-info (pyproject.toml)
 python-bidi==0.6.11
     # via easyocr
 python-dateutil==2.9.0.post0
@@ -323,30 +342,34 @@ python-dateutil==2.9.0.post0
     #   elasticsearch
     #   pandas
 python-docx==1.2.0
-    # via turinton-rag (pyproject.toml)
+    # via ai-rag-info (pyproject.toml)
 python-dotenv==1.2.4
     # via
     #   pydantic-settings
     #   uvicorn
 python-multipart==0.0.32
     # via
-    #   turinton-rag (pyproject.toml)
+    #   ai-rag-info (pyproject.toml)
     #   mcp
 pywin32==312 ; sys_platform == 'win32'
     # via mcp
 pyyaml==6.0.3
     # via
     #   easyocr
+    #   huggingface-hub
     #   langchain-core
+    #   transformers
     #   uvicorn
 redis==8.1.0
-    # via turinton-rag (pyproject.toml)
+    # via ai-rag-info (pyproject.toml)
 referencing==0.37.0
     # via
     #   jsonschema
     #   jsonschema-specifications
 regex==2026.9.29
-    # via tiktoken
+    # via
+    #   tiktoken
+    #   transformers
 requests==2.34.2
     # via
     #   google-auth
@@ -362,10 +385,12 @@ rpds-py==2026.6.3
     # via
     #   jsonschema
     #   referencing
+safetensors==0.8.0
+    # via transformers
 scikit-image==0.26.0
     # via easyocr
 scikit-learn==1.9.1
-    # via turinton-rag (pyproject.toml)
+    # via ai-rag-info (pyproject.toml)
 scipy==1.18.1
     # via
     #   easyocr
@@ -399,7 +424,7 @@ starlette==1.7.0
 sympy==1.14.0
     # via torch
 tabulate==0.10.0
-    # via turinton-rag (pyproject.toml)
+    # via ai-rag-info (pyproject.toml)
 tenacity==9.1.4
     # via
     #   google-genai
@@ -410,13 +435,21 @@ tifffile==2026.9.20
     # via scikit-image
 tiktoken==0.14.0
     # via langchain-openai
+tokenizers==0.23.2
+    # via transformers
 torch==2.14.1
     # via
-    #   turinton-rag (pyproject.toml)
+    #   ai-rag-info (pyproject.toml)
     #   easyocr
     #   torchvision
 torchvision==0.29.1
     # via easyocr
+tqdm==4.70.1
+    # via
+    #   huggingface-hub
+    #   transformers
+transformers==5.18.0
+    # via ai-rag-info (pyproject.toml)
 triton==3.8.0 ; python_full_version < '3.15' and sys_platform == 'linux'
     # via torch
 truststore==0.10.4 ; sys_platform != 'emscripten'
@@ -424,7 +457,9 @@ truststore==0.10.4 ; sys_platform != 'emscripten'
     #   httpcore2
     #   httpx2
 typer==0.27.2
-    # via turinton-rag (pyproject.toml)
+    # via
+    #   ai-rag-info (pyproject.toml)
+    #   transformers
 typing-extensions==4.16.0
     # via
     #   aiohttp
@@ -435,6 +470,7 @@ typing-extensions==4.16.0
     #   fastapi
     #   google-genai
     #   httpx2
+    #   huggingface-hub
     #   langchain-core
     #   langchain-protocol
     #   langsmith
@@ -467,12 +503,12 @@ uuid-utils==0.17.1
     #   langsmith
 uvicorn==0.54.0
     # via
-    #   turinton-rag (pyproject.toml)
+    #   ai-rag-info (pyproject.toml)
     #   mcp
 uvloop==0.23.0 ; platform_python_implementation != 'PyPy' and sys_platform != 'cygwin' and sys_platform != 'win32'
     # via uvicorn
 watchdog==6.0.0
-    # via turinton-rag (pyproject.toml)
+    # via ai-rag-info (pyproject.toml)
 watchfiles==1.3.0
     # via uvicorn
 websockets==16.1.1

@@ -15,6 +15,7 @@ from redis.exceptions import RedisError
 from src.core.errors import UpstreamError
 from src.core.registry import Registries
 from src.ports.runtime import RateDecision
+from src.runtime.redis_client import DEFAULT_SOCKET_TIMEOUT, new_client
 
 if TYPE_CHECKING:
     from src.core.config import Settings
@@ -60,8 +61,10 @@ class MemoryRateLimiter:
 
 
 class RedisRateLimiter:
-    def __init__(self, url: str, *, namespace: str = "rag") -> None:
-        self._client: aioredis.Redis = aioredis.from_url(url, decode_responses=True, health_check_interval=30)
+    def __init__(
+        self, url: str, *, namespace: str = "rag", socket_timeout: float = DEFAULT_SOCKET_TIMEOUT
+    ) -> None:
+        self._client: aioredis.Redis = new_client(url, decode_responses=True, socket_timeout=socket_timeout)
         self._script = self._client.register_script(_LUA)
         self._ns = namespace
 
@@ -88,7 +91,11 @@ def build_memory_limiter(settings: Settings) -> MemoryRateLimiter:
 
 
 def build_redis_limiter(settings: Settings) -> RedisRateLimiter:
-    return RedisRateLimiter(settings.redis_url, namespace=settings.redis_namespace)
+    return RedisRateLimiter(
+        settings.redis_url,
+        namespace=settings.redis_namespace,
+        socket_timeout=settings.redis_socket_timeout_seconds,
+    )
 
 
 def register_builtin_limiters(registries: Registries) -> None:

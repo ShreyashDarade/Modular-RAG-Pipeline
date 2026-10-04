@@ -73,9 +73,9 @@ desktop.ini
 data/
 !data/.gitkeep
 
-# Model weights (downloaded at runtime)
-models/
-!models/.gitkeep
+# Model weights (downloaded at runtime) - the top-level directory only; src/models is source code
+/models/
+!/models/.gitkeep
 
 # Logs
 logs/
@@ -161,3 +161,7 @@ MANIFEST
 # Tooling caches
 .ruff_cache/
 .mypy_cache/
+
+# Tool caches
+.import_linter_cache/
+.grimp_cache/

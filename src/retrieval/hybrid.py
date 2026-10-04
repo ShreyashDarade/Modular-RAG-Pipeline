@@ -1,5 +1,8 @@
 """Hybrid (lexical + vector) retrieval over any number of collections and content kinds.
 
+Produces *candidates* - fused, best first, per query variant. Merging the variants, reranking and
+the final cut happen in :class:`~src.retrieval.pipeline.RetrievalPipeline`.
+
 All searches for all query variants, collections and kinds go out in **one** Elasticsearch round
 trip, and all query vectors in one embedding call per embedding model - the dominant cost of a
 naive implementation is serial network latency, not compute.
@@ -8,7 +11,7 @@ naive implementation is serial network latency, not compute.
 from __future__ import annotations
 
 import asyncio
-from collections import Counter, defaultdict
+from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -26,7 +29,6 @@ from src.core.types import (
 )
 from src.models.registry import ModelRegistry
 from src.ports.indexing import Searcher
-from src.ports.retrieval import Reranker
 
 if TYPE_CHECKING:
     from src.core.config import Settings
@@ -34,7 +36,6 @@ if TYPE_CHECKING:
 RRF_K = 60
 CROSS_REFERENCE_DISCOUNT = 0.7
 MAX_SIBLINGS, MAX_ADJACENT = 5, 3
-MAX_CHUNKS_PER_PAGE = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,16 +52,13 @@ class HybridRetriever:
         searcher: Searcher,
         models: ModelRegistry,
         config: RagConfig,
-        reranker: Reranker,
         settings: Settings,
     ) -> None:
         self._searcher = searcher
         self._models = models
         self._config = config
-        self._reranker = reranker
         self._alpha = settings.hybrid_alpha
         self._search_size = settings.retriever_top_k * 3
-        self._final_k = settings.rerank_top_k
         self._cross_references = settings.enable_cross_references
 
     # --- scope -----------------------------------------------------------------------------
@@ -121,7 +119,7 @@ class HybridRetriever:
             for query_index, docs in enumerate(related):
                 per_query[query_index].extend(docs)
 
-        return [self._diversify(self._reranker.rerank(docs, queries[i])) for i, docs in enumerate(per_query)]
+        return [sorted(docs, key=lambda d: d.score, reverse=True) for docs in per_query]
 
     async def _embed(self, queries: Sequence[str], targets: list[_Target]) -> dict[str, list[list[float]]]:
         names = sorted({t.collection.embedding_model for t in targets})
@@ -229,22 +227,3 @@ class HybridRetriever:
                 docs.append(doc)
             out.append(docs)
         return out
-
-    def _diversify(self, docs: list[RetrievedDocument]) -> list[RetrievedDocument]:
-        """Best ``final_k`` by score, taking at most ``MAX_CHUNKS_PER_PAGE`` chunks per page
-        first and only then filling remaining slots from the overflow."""
-        ranked = sorted(docs, key=lambda d: d.final_score, reverse=True)
-        if len(ranked) <= self._final_k:
-            return ranked
-        per_page: Counter[tuple[str, str | None, int | None]] = Counter()
-        chosen: list[RetrievedDocument] = []
-        overflow: list[RetrievedDocument] = []
-        for doc in ranked:
-            key = (doc.collection, doc.metadata.get("source"), doc.metadata.get("page"))
-            if per_page[key] < MAX_CHUNKS_PER_PAGE and len(chosen) < self._final_k:
-                per_page[key] += 1
-                chosen.append(doc)
-            else:
-                overflow.append(doc)
-        chosen.extend(overflow[: self._final_k - len(chosen)])
-        return sorted(chosen, key=lambda d: d.final_score, reverse=True)

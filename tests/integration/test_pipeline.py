@@ -133,7 +133,10 @@ async def test_collections_are_isolated_and_can_use_different_embedding_models(
     both = await container.retrieval.retrieve(
         "vacation days carry over", container.retrieval.scope(["alpha", "beta"])
     )
-    assert both.documents[0].collection == "beta" and "vacation" in both.documents[0].content
+    # first-stage scores are per index and not comparable across collections, so without a reranker the
+    # collections are interleaved by rank: both are represented, but the best match is not guaranteed first
+    assert {d.collection for d in both.documents} == {"alpha", "beta"}
+    assert any(d.collection == "beta" and "vacation" in d.content for d in both.documents)
 
     # beta indexes text+table only and accepts only pdf/text/csv
     with pytest.raises(InvalidRequestError):
@@ -143,6 +146,36 @@ async def test_collections_are_isolated_and_can_use_different_embedding_models(
         await ingest(container, tmp_path / "x.html", collection="beta")
     with pytest.raises(NotFoundError):
         container.retrieval.scope(["nope"])
+
+
+async def test_a_reranker_merges_collections_by_relevance(make_settings, rag_config, run_id, tmp_path: Path):
+    """The point of reranking across collections: their first-stage scores cannot be compared, a reranker's can."""
+    from src.core.specs import RerankerSpec
+
+    config = rag_config.model_copy(
+        update={
+            "reranker": "overlap",
+            "reranker_models": {"overlap": RerankerSpec(provider="overlap", model="words")},
+        }
+    )
+    built = await Container.build(make_settings(), role="api", with_ingestion=True, config=config)
+    await built.start()
+    try:
+        await ingest(built, make_pdf(tmp_path / "finance.pdf", FINANCE), collection="alpha")
+        (tmp_path / "hr.txt").write_text(
+            "Employees accrue vacation days monthly and may carry five days over to the next year.\n" * 3
+        )
+        await ingest(built, tmp_path / "hr.txt", collection="beta")
+        result = await built.retrieval.retrieve(
+            "vacation days carry over", built.retrieval.scope(["alpha", "beta"])
+        )
+        assert result.documents[0].collection == "beta" and "vacation" in result.documents[0].content
+        assert result.documents[0].final_score > result.documents[-1].final_score
+    finally:
+        names = list(await built.elastic.client.indices.get(index=f"t{run_id}-*", ignore_unavailable=True))
+        if names:
+            await built.elastic.client.indices.delete(index=names, ignore_unavailable=True)
+        await built.close()
 
 
 async def test_selective_kinds_and_sources(container: Container, tmp_path: Path):

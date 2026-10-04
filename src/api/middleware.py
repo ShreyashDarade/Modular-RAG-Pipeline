@@ -3,6 +3,7 @@ control (load shedding) and metrics."""
 
 from __future__ import annotations
 
+import contextlib
 import json
 import time
 import uuid
@@ -80,3 +81,76 @@ class RequestContextMiddleware:
                     )
         finally:
             request_id_var.reset(token)
+
+
+class _BodyTooLarge(Exception):
+    pass
+
+
+class MaxBodySizeMiddleware:
+    """Refuse an oversized upload *before* the framework spools it to disk.
+
+    ``DataStore.save`` enforces the limit while copying, but by then Starlette has already received
+    and spooled the whole multipart body - a client could make the server buffer gigabytes. This
+    rejects on ``Content-Length`` immediately and counts bytes for chunked bodies without one.
+    ``max_bytes`` should be the upload limit plus a little multipart overhead.
+    """
+
+    def __init__(self, app: ASGIApp, *, path: str, max_bytes: int) -> None:
+        self.app = app
+        self._path = path
+        self._max = max_bytes
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or scope["method"] != "POST" or scope["path"] != self._path:
+            await self.app(scope, receive, send)
+            return
+        declared = dict(scope["headers"]).get(b"content-length")
+        if declared is not None and declared.isdigit() and int(declared) > self._max:
+            await self._reject(send)
+            return
+        received = 0
+        exceeded = False
+        rejected = False
+
+        async def counting_receive() -> Message:
+            nonlocal received, exceeded
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > self._max:
+                    exceeded = True
+                    raise _BodyTooLarge
+            return message
+
+        async def guarded_send(message: Message) -> None:
+            # Whatever the framework makes of the aborted read (FastAPI turns it into a generic
+            # "error parsing the body" 400), the caller gets the accurate 413.
+            nonlocal rejected
+            if exceeded:
+                if not rejected:
+                    rejected = True
+                    await self._reject(send)
+                return
+            await send(message)
+
+        with contextlib.suppress(_BodyTooLarge):
+            await self.app(scope, counting_receive, guarded_send)
+        if exceeded and not rejected:
+            await self._reject(send)
+
+    async def _reject(self, send: Send) -> None:
+        body = json.dumps(
+            {
+                "detail": f"upload exceeds the {self._max / (1024 * 1024):g} MB request limit",
+                "code": "payload_too_large",
+            }
+        ).encode()
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 413,
+                "headers": [(b"content-type", b"application/json")],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})

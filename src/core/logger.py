@@ -45,7 +45,7 @@ def configure_logging(level: str | int = "INFO", fmt: str = "text") -> logging.L
         root.removeHandler(existing)
     root.addHandler(handler)
     root.setLevel(level)
-    return logging.getLogger("turinton-rag")
+    return logging.getLogger("ai-rag-info")
 
 
-logger = logging.getLogger("turinton-rag")
+logger = logging.getLogger("ai-rag-info")

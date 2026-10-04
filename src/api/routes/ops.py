@@ -54,7 +54,12 @@ async def status(container: ContainerDep):
         "parsers": container.parsers.names(),
         "retrieval": {
             "query_expander": config.query_expander,
-            "reranker": config.reranker,
+            "reranker": {
+                "name": config.reranker,
+                "provider": config.reranker_spec().provider,
+                "model": config.reranker_spec().model or None,
+                "candidates": s.rerank_candidates,
+            },
             "top_k": s.retriever_top_k,
             "rerank_top_k": s.rerank_top_k,
             "cross_references": s.enable_cross_references,

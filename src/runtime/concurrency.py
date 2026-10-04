@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
+from contextlib import asynccontextmanager
 from typing import Any
+
+from src.core.errors import RequestTimeoutError
 
 
 class Bulkhead:
@@ -65,3 +68,39 @@ async def run_all[T](coroutines: Iterable[Awaitable[T]]) -> list[T]:
 
 async def _await[T](awaitable: Awaitable[T]) -> T:
     return await awaitable
+
+
+@asynccontextmanager
+async def deadline(seconds: float) -> AsyncIterator[None]:
+    """Bound the enclosed work to ``seconds``; beyond that it is a ``RequestTimeoutError`` (HTTP 504)."""
+    try:
+        async with asyncio.timeout(seconds):
+            yield
+    except TimeoutError:
+        raise RequestTimeoutError(f"request did not finish within {seconds:g}s") from None
+
+
+async def deadline_iter[T](source: AsyncIterator[T], seconds: float) -> AsyncIterator[T]:
+    """Yield from ``source`` but give the *whole* iteration ``seconds`` (a ``RequestTimeoutError`` beyond that).
+
+    Unlike wrapping the loop in :func:`deadline`, each pull is bounded on its own, so the iterator may be
+    consumed from a different task than the one that created it (as a streaming HTTP response does).
+    """
+    loop = asyncio.get_running_loop()
+    end = loop.time() + seconds
+    try:
+        while True:
+            remaining = end - loop.time()
+            if remaining <= 0:
+                raise RequestTimeoutError(f"request did not finish within {seconds:g}s")
+            try:
+                item = await asyncio.wait_for(anext(source), remaining)
+            except StopAsyncIteration:
+                return
+            except TimeoutError:
+                raise RequestTimeoutError(f"request did not finish within {seconds:g}s") from None
+            yield item
+    finally:
+        aclose = getattr(source, "aclose", None)
+        if aclose is not None:
+            await aclose()

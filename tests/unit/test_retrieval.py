@@ -10,7 +10,7 @@ from src.core.specs import RagConfig
 from src.core.types import RetrievedDocument
 from src.models.registry import ModelRegistry
 from src.retrieval.hybrid import CROSS_REFERENCE_DISCOUNT, HybridRetriever
-from src.retrieval.rerank import HeuristicReranker, IdentityReranker
+from src.retrieval.rerank import HeuristicReranker
 
 from tests.fake_plugin import HashEmbedder, register
 from tests.unit.fakes import MemorySearcher
@@ -58,7 +58,7 @@ def doc(
     }
 
 
-def retriever(searcher: MemorySearcher, *, reranker=None, **settings) -> HybridRetriever:
+def retriever(searcher: MemorySearcher, **settings) -> HybridRetriever:
     s = Settings(_env_file=None, plugins=[], **settings)
     registries = Registries()
     register(registries)
@@ -66,7 +66,6 @@ def retriever(searcher: MemorySearcher, *, reranker=None, **settings) -> HybridR
         searcher=searcher,
         models=ModelRegistry(CONFIG, s, registries),
         config=CONFIG,
-        reranker=reranker or IdentityReranker(),
         settings=s,
     )
 
@@ -136,28 +135,6 @@ async def test_one_search_round_trip_for_all_variants_and_kinds():
     assert searcher.search_calls == [4 * 3], "4 variants x 3 kinds, in a single call"
 
 
-async def test_diversification_caps_chunks_per_page_then_backfills():
-    """Regression: the old check ran against a set, so 'max 2 per page' never limited anything."""
-    searcher = MemorySearcher()
-    for i in range(8):
-        searcher.add("main-text", doc(f"p1-{i}", f"revenue revenue growth item {i}", page=1))
-    for i in range(3):
-        searcher.add("main-text", doc(f"p2-{i}", f"revenue note {i}", page=2))
-    r = retriever(searcher, rerank_top_k=4, enable_cross_references=False)
-    [docs] = await r.retrieve_many(["revenue growth"], r.resolve_scope(None))
-    pages = [d.metadata["page"] for d in docs]
-    assert len(docs) == 4 and pages.count(1) == 2 and pages.count(2) == 2
-
-
-async def test_diversification_backfills_when_only_one_page_matches():
-    searcher = MemorySearcher()
-    for i in range(5):
-        searcher.add("main-text", doc(f"c{i}", f"revenue growth {i}", page=1))
-    r = retriever(searcher, rerank_top_k=4, enable_cross_references=False)
-    [docs] = await r.retrieve_many(["revenue growth"], r.resolve_scope(None))
-    assert len(docs) == 4, "slots are backfilled from the overflow rather than left empty"
-
-
 async def test_source_filter_limits_results():
     searcher = MemorySearcher()
     searcher.add("main-text", doc("a", "revenue growth", source="/a.pdf"))
@@ -192,17 +169,16 @@ def make_doc(**meta) -> RetrievedDocument:
     )
 
 
-def test_heuristic_reranker_signals():
+async def test_heuristic_reranker_signals():
     rr = HeuristicReranker()
-    plain = rr.rerank([make_doc()], "revenue")[0].rerank_score
-    with_keyword = rr.rerank([make_doc(keywords=["revenue"])], "revenue")[0].rerank_score
-    exact = rr.rerank([make_doc(content="total revenue grew")], "revenue")[0].rerank_score
-    early = rr.rerank([make_doc(page=1)], "revenue")[0].rerank_score
+    plain = (await rr.rerank([make_doc()], "revenue"))[0].rerank_score
+    with_keyword = (await rr.rerank([make_doc(keywords=["revenue"])], "revenue"))[0].rerank_score
+    exact = (await rr.rerank([make_doc(content="total revenue grew")], "revenue"))[0].rerank_score
+    early = (await rr.rerank([make_doc(page=1)], "revenue"))[0].rerank_score
     assert with_keyword > plain and exact > plain and early > plain
     table = RetrievedDocument(
         content="x", metadata={"keywords": [], "page": 9}, score=1.0, collection="m", kind="table", index="i"
     )
-    assert (
-        rr.rerank([table], "show me the data table")[0].rerank_score
-        > rr.rerank([table], "unrelated")[0].rerank_score
-    )
+    assert (await rr.rerank([table], "show me the data table"))[0].rerank_score > (
+        await rr.rerank([table], "unrelated")
+    )[0].rerank_score

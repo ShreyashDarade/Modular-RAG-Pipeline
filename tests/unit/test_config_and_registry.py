@@ -60,7 +60,7 @@ def test_default_rag_config_is_synthesised_from_classic_env_vars():
     assert collection.chunker.chunk_size == 500
     assert collection.index_names() == {"text": "my-text", "table": "my-tables", "image": "my-images"}
     assert collection.subdir == "", "legacy layout: files directly in DATA_DIR"
-    assert cfg.query_expander == "llm" and cfg.reranker == "heuristic"
+    assert cfg.query_expander == "llm" and cfg.reranker == "identity"
 
 
 def test_disabling_expansion_and_rerank_selects_the_identity_strategies():
@@ -157,7 +157,7 @@ def test_builtin_registries_cover_every_extension_point():
     assert {"pdf", "image", "text", "html", "csv", "xlsx", "docx"} <= set(registries.parsers.names())
     assert registries.chunkers.names() == ["recursive"] and registries.ocr_engines.names() == ["easyocr"]
     assert set(registries.query_expanders.names()) == {"llm", "identity"}
-    assert set(registries.rerankers.names()) == {"heuristic", "identity"}
+    assert set(registries.rerankers.names()) == {"heuristic", "identity", "cross-encoder", "cohere", "jina"}
     assert set(registries.caches.names()) == {"memory", "redis", "tiered"}
     assert set(registries.job_backends.names()) == {"inprocess", "redis"}
     assert set(registries.conversation_stores.names()) == {"memory", "redis"}
@@ -180,3 +180,70 @@ def test_registries_are_independent_instances():
     a, b = Registries(), Registries()
     a.parsers.register("x", lambda s: s)
     assert "x" not in b.parsers, "no global state: each container gets its own registries"
+
+
+def test_refresh_interval_must_be_an_elasticsearch_time_value():
+    with pytest.raises(ValueError, match="ES_REFRESH_INTERVAL"):
+        Settings(_env_file=None, es_refresh_interval="soon")
+    assert Settings(_env_file=None, es_refresh_interval="500ms").es_refresh_interval == "500ms"
+
+
+def test_search_settle_window_follows_the_refresh_mode():
+    assert (
+        Settings(_env_file=None, ingest_refresh="each", es_refresh_interval="5s").search_settle_seconds == 0.0
+    )
+    assert (
+        Settings(_env_file=None, ingest_refresh="interval", es_refresh_interval="5s").search_settle_seconds
+        == 6.0
+    )
+    assert (
+        Settings(_env_file=None, ingest_refresh="interval", es_refresh_interval="1m").search_settle_seconds
+        == 61.0
+    )
+
+
+def test_interval_mode_refuses_a_disabled_refresh():
+    with pytest.raises(ValueError, match="never refreshes"):
+        Settings(_env_file=None, ingest_refresh="interval", es_refresh_interval="-1")
+
+
+def test_reranker_from_environment_builds_a_named_model_entry():
+    cfg = load_rag_config(Settings(_env_file=None, reranker="cross-encoder", reranker_model="org/ce"))
+    spec = cfg.reranker_spec()
+    assert cfg.reranker == "default" and spec.provider == "cross-encoder" and spec.model == "org/ce"
+    # a built-in named directly needs no model
+    assert (
+        load_rag_config(Settings(_env_file=None, reranker="identity")).reranker_spec().provider == "identity"
+    )
+    # a provider with no model is passed through so the provider reports the missing model itself
+    assert load_rag_config(Settings(_env_file=None, reranker="cohere")).reranker_spec().provider == "cohere"
+
+
+def test_rerank_candidates_must_cover_the_result_size():
+    with pytest.raises(ValueError, match="RERANK_CANDIDATES"):
+        Settings(_env_file=None, retriever_top_k=20, rerank_candidates=10)
+
+
+def test_the_heuristic_reranker_is_opt_in():
+    assert load_rag_config(Settings(_env_file=None)).reranker == "identity"
+    assert load_rag_config(Settings(_env_file=None, rerank_enabled=True)).reranker == "heuristic"
+    assert load_rag_config(Settings(_env_file=None, reranker="heuristic")).reranker == "heuristic"
+
+
+def test_a_larger_result_size_widens_an_unset_candidate_pool_but_not_an_explicit_one():
+    """Regression: RETRIEVER_TOP_K above the default pool of 30 used to stop the process from starting."""
+    assert Settings(_env_file=None, retriever_top_k=50).rerank_candidates == 50
+    assert Settings(_env_file=None, retriever_top_k=5).rerank_candidates == 30
+    with pytest.raises(ValueError, match="RERANK_CANDIDATES"):
+        Settings(_env_file=None, retriever_top_k=50, rerank_candidates=20)
+
+
+def test_reranker_model_without_a_model_reranker_is_an_error_not_silently_ignored():
+    for kwargs in (
+        {"reranker_model": "org/m"},
+        {"reranker_base_url": "http://x"},
+        {"reranker": "identity", "reranker_model": "m"},
+    ):
+        with pytest.raises(ValueError, match="silently ignored"):
+            Settings(_env_file=None, **kwargs)
+    Settings(_env_file=None, reranker="cross-encoder", reranker_model="org/m")

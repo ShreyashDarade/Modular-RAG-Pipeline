@@ -7,6 +7,7 @@ from typing import Annotated
 
 import typer
 
+from src.cli.evaluate import eval_app
 from src.core.config import get_settings
 from src.core.container import Container, Role
 from src.core.errors import RagError
@@ -15,6 +16,7 @@ from src.core.logger import configure_logging
 from src.core.types import CONTENT_KINDS, JobSpec
 
 app = typer.Typer(help="Command line tools for the RAG pipeline.", no_args_is_help=True)
+app.add_typer(eval_app, name="eval")
 
 Collection = Annotated[
     str | None, typer.Option("--collection", "-c", help="Collection (default: the default collection)")

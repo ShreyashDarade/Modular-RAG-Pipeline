@@ -143,7 +143,9 @@ class IngestionService:
                     reindexed=False,
                     document_id=existing.document_id,
                 )
-            return await self._run(collection, parser, path, source, checksum, kinds, hint)
+            return await self._run(
+                collection, parser, path, source, checksum, kinds, hint, reingest=existing is not None
+            )
 
     def _effective_kinds(
         self, collection: CollectionSpec, spec: JobSpec, parser: Parser
@@ -173,6 +175,8 @@ class IngestionService:
         checksum: str,
         kinds: tuple[ContentKind, ...],
         hint: str | None,
+        *,
+        reingest: bool,
     ) -> IngestionSummary:
         document_id = f"doc_{path.stem}_{uuid.uuid4().hex[:8]}"
         summary = IngestionSummary(collection.name, source, parser.name, document_id=document_id)
@@ -197,8 +201,12 @@ class IngestionService:
             summary.skipped_reason = "no_content"
 
         all_indices = list(collection.index_names().values())
+        if reingest and self._s.ingest_refresh == "interval":
+            # the sweep only sees what is searchable: an earlier generation written moments ago may not be yet
+            await self._writer.refresh(all_indices)
         await self._writer.delete_other_generations(all_indices, source, document_id)
-        await self._writer.refresh(all_indices)
+        if self._s.ingest_refresh == "each":
+            await self._writer.refresh(all_indices)
         await self._registry.put(
             DocumentRecord(
                 collection=collection.name,

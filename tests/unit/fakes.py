@@ -58,6 +58,13 @@ class MemorySearcher:
             if cid in self.docs.get(index, {})
         ]
 
+    async def sample(self, index: str, size: int, seed: int) -> list[RawHit]:
+        import random
+
+        docs = sorted(self.docs.get(index, {}).values(), key=lambda d: d["chunk_id"])
+        picked = random.Random(seed).sample(docs, min(size, len(docs)))
+        return [self._hit(index, d, 0.0) for d in picked]
+
     @staticmethod
     def _hit(index: str, source: dict, score: float) -> RawHit:
         return RawHit(

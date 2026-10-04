@@ -10,6 +10,7 @@ from src.core.registry import Registries
 from src.jobs.inprocess import register_inprocess
 from src.jobs.redis_streams import register_redis
 from src.models.providers import register_builtin_providers
+from src.models.rerankers import register_reranker_providers
 from src.parsing.builtin import register_builtin_parsers
 from src.retrieval.expansion import register_builtin_expanders
 from src.retrieval.rerank import register_builtin_rerankers
@@ -30,6 +31,7 @@ def build_registries(settings: Settings) -> Registries:
         register_builtin_chunkers,
         register_builtin_expanders,
         register_builtin_rerankers,
+        register_reranker_providers,
         register_builtin_caches,
         register_builtin_limiters,
         register_builtin_stores,

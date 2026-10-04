@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
 
 from fastapi import Depends, Request, Response
 
+from src.application import RagService
 from src.core.container import Container
-from src.core.errors import RateLimitedError, RequestTimeoutError
+from src.core.errors import RateLimitedError
+from src.runtime.concurrency import deadline as request_deadline
 from src.runtime.metrics import RATE_LIMITED
 
 
@@ -17,6 +18,14 @@ def get_container(request: Request) -> Container:
 
 
 ContainerDep = Annotated[Container, Depends(get_container)]
+
+
+def get_service(request: Request) -> RagService:
+    """The use-case layer. Routes call it and translate - they implement no pipeline logic themselves."""
+    return request.app.state.service
+
+
+ServiceDep = Annotated[RagService, Depends(get_service)]
 
 
 async def rate_limit(request: Request, response: Response, container: ContainerDep) -> None:
@@ -41,9 +50,5 @@ RateLimited = Depends(rate_limit)
 @asynccontextmanager
 async def deadline(container: Container) -> AsyncIterator[None]:
     """Bound a request's total time to ``REQUEST_TIMEOUT_SECONDS`` (504 beyond that)."""
-    seconds = container.settings.request_timeout_seconds
-    try:
-        async with asyncio.timeout(seconds):
-            yield
-    except TimeoutError:
-        raise RequestTimeoutError(f"request did not finish within {seconds}s") from None
+    async with request_deadline(container.settings.request_timeout_seconds):
+        yield

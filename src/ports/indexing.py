@@ -13,6 +13,10 @@ class IndexSpec:
 
     name: str
     dims: int | None
+    #: Per-index overrides of the global ES_* settings (``None`` = use the global value).
+    shards: int | None = None
+    replicas: int | None = None
+    vector_index_type: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +46,9 @@ class Searcher(Protocol):
         """One round trip for all requests. Raises ``SearchError`` if any of them fails."""
 
     async def fetch(self, indices: Sequence[str], chunk_ids: Sequence[str]) -> list[RawHit]: ...
+
+    async def sample(self, index: str, size: int, seed: int) -> list[RawHit]:
+        """A reproducible pseudo-random sample of up to ``size`` chunks (used to build evaluation sets)."""
 
 
 class DocumentRegistry(Protocol):

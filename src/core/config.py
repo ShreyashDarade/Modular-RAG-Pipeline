@@ -8,6 +8,7 @@ classic ``OPENAI_*`` / ``CHUNK_*`` / ``ES_INDEX_*`` variables by :func:`load_rag
 
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal, Self
@@ -15,7 +16,14 @@ from typing import Literal, Self
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from src.core.specs import ChatModelSpec, ChunkerSpec, CollectionSpec, EmbeddingModelSpec, RagConfig
+from src.core.specs import (
+    ChatModelSpec,
+    ChunkerSpec,
+    CollectionSpec,
+    EmbeddingModelSpec,
+    RagConfig,
+    RerankerSpec,
+)
 
 
 class Settings(BaseSettings):
@@ -69,6 +77,8 @@ class Settings(BaseSettings):
     azure_openai_api_version: str | None = None
     anthropic_api_key: SecretStr | None = None
     google_api_key: SecretStr | None = None
+    cohere_api_key: SecretStr | None = None
+    jina_api_key: SecretStr | None = None
     ollama_base_url: str | None = None
     model_timeout_seconds: float = 30.0
     model_max_retries: int = 4
@@ -86,8 +96,22 @@ class Settings(BaseSettings):
     # --- retrieval ----------------------------------------------------------------------------
     retriever_top_k: int = Field(default=10, gt=0)
     hybrid_alpha: float = Field(default=0.5, ge=0.0, le=1.0)
-    rerank_enabled: bool = True
+    #: Legacy switch: true selects the ``heuristic`` reranker. Off by default - on a public benchmark it
+    #: scored *below* no reranking at all (docs/evaluation.md); choose a reranker with RERANKER and measure it.
+    rerank_enabled: bool = False
     rerank_top_k: int = Field(default=6, gt=0)
+    #: Fused candidates (best first, across all query variants) handed to the reranker. A model-based
+    #: reranker costs roughly linearly in this; recall can't improve beyond what is in the pool.
+    rerank_candidates: int = Field(default=30, gt=0)
+    #: Put the best chunk of every content kind (text/table/image) first, so a table or scanned-image answer
+    #: is not drowned out by text. Turn off for single-kind corpora or when a model reranker's order is final.
+    retrieval_balance_kinds: bool = True
+    #: Reranker for the synthesised default config: a built-in (heuristic, identity) or a provider
+    #: (cross-encoder, cohere, jina) together with RERANKER_MODEL. Empty: identity (fused order), or the
+    #: heuristic if RERANK_ENABLED=true. With RAG_CONFIG this is ignored - the file names the reranker.
+    reranker: str = ""
+    reranker_model: str = ""
+    reranker_base_url: str | None = None
     query_expansion_enabled: bool = True
     query_expansion_timeout_seconds: float = 5.0
     query_expansion_cache_ttl_seconds: int = 86_400
@@ -98,6 +122,8 @@ class Settings(BaseSettings):
     # --- chat ---------------------------------------------------------------------------------
     chat_store: Literal["memory", "redis"] = "memory"
     chat_history_messages: int = Field(default=20, ge=0)
+    #: Character budget for the history sent to the model; oldest turns are dropped first.
+    chat_history_max_chars: int = Field(default=24_000, gt=0)
     chat_history_ttl_seconds: int = 86_400
     chat_memory_conversations: int = Field(default=10_000, gt=0)
     chat_condense_questions: bool = True
@@ -112,6 +138,9 @@ class Settings(BaseSettings):
     ingest_queue_max_size: int = Field(default=1000, gt=0)
     ingest_wait_default: bool = True
     ingest_max_attempts: int = Field(default=3, gt=0)
+    #: "each": refresh the indices when every document finishes, so it is searchable the moment its job
+    #: reports success. "interval": rely on ES_REFRESH_INTERVAL - less work for the cluster when bulk-loading.
+    ingest_refresh: Literal["each", "interval"] = "each"
     #: Embedding+indexing slices in flight per document; bounds the memory held as vectors.
     ingest_pipeline_depth: int = Field(default=4, gt=0)
     job_ttl_seconds: int = 86_400
@@ -136,6 +165,10 @@ class Settings(BaseSettings):
     ocr_max_side: int = Field(default=2560, gt=0)
     #: Skip the (slow) pre-processed second pass when the raw image already reads this well.
     ocr_early_exit_confidence: float = Field(default=0.85, ge=0.0, le=1.0)
+    #: Same, for the Hindi/Marathi model. Its confidence is poorly calibrated (0.26-0.47 on text that was
+    #: read 97% correctly) and on the degraded scans measured the second pass never improved the result, so
+    #: by default the first pass is accepted. Raise it (up to 1.0) for workloads of very poor scans.
+    ocr_early_exit_confidence_devanagari: float = Field(default=0.0, ge=0.0, le=1.0)
     supported_ocr_languages: list[str] = Field(default_factory=lambda: ["en", "mr", "hi"])
 
     # --- API ----------------------------------------------------------------------------------
@@ -159,6 +192,8 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379"
     #: Key prefix for everything this system stores in Redis, so environments can share one Redis.
     redis_namespace: str = "rag"
+    #: Connect/read timeout of every Redis client. Must exceed the 1 s queue poll of the workers.
+    redis_socket_timeout_seconds: float = Field(default=5.0, ge=2.0)
     cache_backend: Literal["memory", "redis", "tiered"] = "memory"
     cache_ttl_seconds: int = 3600
     cache_memory_entries: int = Field(default=2000, gt=0)
@@ -169,6 +204,40 @@ class Settings(BaseSettings):
         if self.use_redis_cache and "cache_backend" not in self.model_fields_set:
             self.cache_backend = "tiered"
         return self
+
+    @model_validator(mode="after")
+    def _refresh_interval_is_usable(self) -> Self:
+        if self.es_refresh_interval != "-1" and _duration_seconds(self.es_refresh_interval) is None:
+            raise ValueError(
+                f"ES_REFRESH_INTERVAL must look like 500ms, 1s, 5s, 1m or -1: {self.es_refresh_interval!r}"
+            )
+        if self.ingest_refresh == "interval" and self.es_refresh_interval == "-1":
+            raise ValueError("INGEST_REFRESH=interval needs a real ES_REFRESH_INTERVAL; -1 never refreshes")
+        return self
+
+    @model_validator(mode="after")
+    def _candidates_cover_the_result_size(self) -> Self:
+        if self.rerank_candidates < self.retriever_top_k:
+            if "rerank_candidates" in self.model_fields_set:
+                raise ValueError("RERANK_CANDIDATES must be at least RETRIEVER_TOP_K")
+            self.rerank_candidates = self.retriever_top_k  # an unset pool follows a larger result size
+        return self
+
+    @model_validator(mode="after")
+    def _reranker_options_need_a_model_reranker(self) -> Self:
+        if (self.reranker_model or self.reranker_base_url) and self.reranker in ("", "identity", "heuristic"):
+            raise ValueError(
+                "RERANKER_MODEL / RERANKER_BASE_URL are set but RERANKER is not a model-based reranker "
+                "(cross-encoder, cohere, jina); they would be silently ignored"
+            )
+        return self
+
+    @property
+    def search_settle_seconds(self) -> float:
+        """How long after an ingest the new chunks may still be invisible to search (0: they are not)."""
+        if self.ingest_refresh == "each":
+            return 0.0
+        return (_duration_seconds(self.es_refresh_interval) or 0.0) + 1.0
 
     @property
     def max_upload_bytes(self) -> int:
@@ -184,9 +253,27 @@ class Settings(BaseSettings):
         )
 
 
+_DURATION = re.compile(r"^(\d+)(ms|s|m|h)$")
+_UNITS = {"ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0}
+
+
+def _duration_seconds(value: str) -> float | None:
+    """Seconds in an Elasticsearch time value (``500ms``, ``5s``, ``1m``); None if it is not one."""
+    match = _DURATION.match(value)
+    return int(match[1]) * _UNITS[match[2]] if match else None
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings()
+
+
+def _legacy_reranker(settings: Settings) -> str:
+    """A built-in named by RERANKER, or - when RERANKER is empty - ``identity`` (``heuristic`` with the
+    legacy RERANK_ENABLED=true)."""
+    if settings.reranker:
+        return settings.reranker
+    return "heuristic" if settings.rerank_enabled else "identity"
 
 
 def load_rag_config(settings: Settings) -> RagConfig:
@@ -199,7 +286,18 @@ def load_rag_config(settings: Settings) -> RagConfig:
         default_collection="default",
         utility_model="default",
         query_expander="llm" if settings.query_expansion_enabled else "identity",
-        reranker="heuristic" if settings.rerank_enabled else "identity",
+        reranker="default" if settings.reranker and settings.reranker_model else _legacy_reranker(settings),
+        reranker_models=(
+            {
+                "default": RerankerSpec(
+                    provider=settings.reranker,
+                    model=settings.reranker_model,
+                    base_url=settings.reranker_base_url,
+                )
+            }
+            if settings.reranker and settings.reranker_model
+            else {}
+        ),
         chat_models={
             "default": ChatModelSpec(
                 provider="openai",

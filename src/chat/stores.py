@@ -12,6 +12,7 @@ from redis.exceptions import RedisError
 from src.core.errors import UpstreamError
 from src.core.registry import Registries
 from src.core.types import ChatMessage
+from src.runtime.redis_client import DEFAULT_SOCKET_TIMEOUT, new_client
 
 if TYPE_CHECKING:
     pass
@@ -57,8 +58,10 @@ class MemoryConversationStore:
 
 
 class RedisConversationStore:
-    def __init__(self, url: str, ttl: int, *, namespace: str = "rag") -> None:
-        self._client: aioredis.Redis = aioredis.from_url(url, decode_responses=True, health_check_interval=30)
+    def __init__(
+        self, url: str, ttl: int, *, namespace: str = "rag", socket_timeout: float = DEFAULT_SOCKET_TIMEOUT
+    ) -> None:
+        self._client: aioredis.Redis = new_client(url, decode_responses=True, socket_timeout=socket_timeout)
         self._ttl = ttl
         self._ns = namespace
 
@@ -114,6 +117,9 @@ def register_builtin_stores(registries: Registries) -> None:
     registries.conversation_stores.register(
         "redis",
         lambda s: RedisConversationStore(
-            s.redis_url, s.chat_history_ttl_seconds, namespace=s.redis_namespace
+            s.redis_url,
+            s.chat_history_ttl_seconds,
+            namespace=s.redis_namespace,
+            socket_timeout=s.redis_socket_timeout_seconds,
         ),
     )

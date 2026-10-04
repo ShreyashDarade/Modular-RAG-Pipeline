@@ -68,14 +68,17 @@ class EasyOcrEngine:
             import torch
         except ImportError as exc:
             raise ConfigError(
-                "OCR needs EasyOCR and torch: pip install 'turinton-rag[worker]' (or set OCR_ENABLED=false)"
+                "OCR needs EasyOCR and torch: pip install 'ai-rag-info[worker]' (or set OCR_ENABLED=false)"
             ) from exc
         self._easyocr = easyocr
         self._gpu = settings.ocr_gpu_enabled and torch.cuda.is_available()
         self._model_dir = Path(settings.ocr_model_dir)
         self._download = settings.ocr_download_models
         self._max_side = settings.ocr_max_side
-        self._early_exit = settings.ocr_early_exit_confidence
+        self._early_exit = {
+            "en": settings.ocr_early_exit_confidence,
+            "dev": settings.ocr_early_exit_confidence_devanagari,
+        }
         self._batch_size = settings.ocr_batch_size
         self._supported = tuple(settings.supported_ocr_languages)
         self._readers: dict[str, _Reader] = {}
@@ -106,7 +109,7 @@ class EasyOcrEngine:
         """Raw image first; only when it reads poorly pay for the (slow) pre-processed pass."""
         reader = self._reader(group)
         raw = reader.read(base, language)
-        if raw.confidence >= self._early_exit:
+        if raw.confidence >= self._early_exit[group]:
             return raw
         processed = reader.read(preprocess_image(base), language)
         return processed if processed.confidence > raw.confidence else raw

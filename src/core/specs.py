@@ -46,6 +46,22 @@ class EmbeddingModelSpec(_Spec):
     options: dict[str, Any] = Field(default_factory=dict)
 
 
+class RerankerSpec(_Spec):
+    """A reranker. ``heuristic`` and ``identity`` need nothing else; model-based ones need ``model``."""
+
+    provider: str
+    model: str = ""
+    base_url: str | None = None
+    #: Candidates scored per forward pass (``cross-encoder``). Hosted APIs take all candidates in one request.
+    batch_size: int = Field(default=16, gt=0)
+    #: Passages are cut to this many characters before scoring (a model truncates by tokens anyway).
+    max_chars: int = Field(default=4000, gt=0)
+    timeout_seconds: float | None = None
+    max_retries: int | None = Field(default=None, ge=0)
+    #: Provider-specific settings (``device``, ``max_length``, ``activation`` for ``cross-encoder``).
+    options: dict[str, Any] = Field(default_factory=dict)
+
+
 class ChunkerSpec(_Spec):
     name: str = "recursive"
     chunk_size: int = Field(default=800, gt=0)
@@ -111,9 +127,12 @@ class RagConfig(_Spec):
     query_expander: str = "llm"
     #: Chat model used by the ``llm`` query expander and for chat question condensing.
     utility_model: str
-    reranker: str = "heuristic"
+    #: A key of ``reranker_models``, or the name of a built-in that needs no model: ``identity`` (keep the
+    #: fused order) or ``heuristic`` (hand-weighted signals; measured to hurt on a public benchmark).
+    reranker: str = "identity"
     chat_models: dict[str, ChatModelSpec]
     embedding_models: dict[str, EmbeddingModelSpec]
+    reranker_models: dict[str, RerankerSpec] = Field(default_factory=dict)
     collections: dict[str, CollectionSpec]
 
     @model_validator(mode="before")
@@ -132,7 +151,7 @@ class RagConfig(_Spec):
 
     @model_validator(mode="after")
     def _cross_references(self) -> Self:
-        for name in (*self.chat_models, *self.embedding_models, *self.collections):
+        for name in (*self.chat_models, *self.embedding_models, *self.reranker_models, *self.collections):
             if not _NAME_RE.match(name):
                 raise ValueError(f"invalid name '{name}': use lowercase letters, digits, '-' and '_'")
         for ref, pool, label in (
@@ -170,6 +189,9 @@ class RagConfig(_Spec):
             return cls.model_validate(raw)
         except ValueError as exc:
             raise ConfigError(f"invalid RAG config {path}: {exc}") from exc
+
+    def reranker_spec(self) -> RerankerSpec:
+        return self.reranker_models.get(self.reranker) or RerankerSpec(provider=self.reranker)
 
     def collection(self, name: str) -> CollectionSpec:
         try:

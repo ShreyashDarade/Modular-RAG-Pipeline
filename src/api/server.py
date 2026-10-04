@@ -16,9 +16,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.errors import install_error_handlers
-from src.api.middleware import RequestContextMiddleware
+from src.api.middleware import MaxBodySizeMiddleware, RequestContextMiddleware
 from src.api.routes import catalog, chat, ingest, ops, search
 from src.api.version import VERSION
+from src.application import RagService
 from src.core.config import Settings, get_settings
 from src.core.container import Container
 from src.core.logger import configure_logging, logger
@@ -45,6 +46,7 @@ def create_app(settings: Settings | None = None, container: Container | None = N
                 await active.close()
             raise
         app.state.container = active
+        app.state.service = RagService(active)
         stop = asyncio.Event()
         worker = active.start_embedded_worker(stop) if active.ingestion else None
         await active.start_watchers()
@@ -69,6 +71,8 @@ def create_app(settings: Settings | None = None, container: Container | None = N
                         "ingestion workers did not drain within %ss", settings.shutdown_grace_seconds
                     )
                     worker.cancel()
+                except Exception as exc:  # the worker died earlier; cleanup below must still run
+                    logger.error("ingestion worker had stopped with an error", exc_info=exc)
             if owned:
                 await active.close()
 
@@ -89,6 +93,11 @@ def create_app(settings: Settings | None = None, container: Container | None = N
         allow_headers=["*"],
         expose_headers=["X-Request-ID", "X-RateLimit-Limit", "X-RateLimit-Remaining", "Retry-After"],
     )
+    app.add_middleware(
+        MaxBodySizeMiddleware,
+        path="/api/v1/ingest",
+        max_bytes=settings.max_upload_bytes + 1024 * 1024,  # + multipart overhead
+    )
     app.add_middleware(RequestContextMiddleware, max_in_flight=settings.max_concurrent_requests)
     for router in (ops.router, ingest.router, search.router, chat.router, catalog.router):
         app.include_router(router)
@@ -98,6 +107,7 @@ def create_app(settings: Settings | None = None, container: Container | None = N
         mount_mcp(app, settings)
     if container is not None:
         app.state.container = container  # visible before lifespan for tests that skip it
+        app.state.service = RagService(container)
     return app
 
 

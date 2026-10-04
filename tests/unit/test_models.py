@@ -104,7 +104,7 @@ def test_a_missing_optional_package_names_the_extra_to_install(monkeypatch):
         return real(name, *a, **k)
 
     monkeypatch.setattr(importlib, "import_module", fake_import)
-    with pytest.raises(ProviderUnavailableError, match=r"turinton-rag\[anthropic\]"):
+    with pytest.raises(ProviderUnavailableError, match=r"ai-rag-info\[anthropic\]"):
         registries().chat_providers.create(
             "anthropic", "m", ChatModelSpec(provider="anthropic", model="x"), Settings(_env_file=None, **KEYS)
         )
@@ -258,3 +258,40 @@ async def test_queries_use_the_shared_cache_documents_do_not():
     assert len(raw.calls) == calls_after_first + 2, (
         "documents are not shared (they are written once, not asked repeatedly)"
     )
+
+
+async def test_the_embedding_cache_keeps_query_and_document_vectors_apart():
+    """Regression: one key served both roles, so "Introduction" embedded as a document was returned for the
+    same text as a query - wrong for any model with a query prefix or instruction."""
+    from src.models.adapters import CachingEmbedder
+    from src.runtime.cache import MemoryCache
+
+    class RoleAware:
+        model_id, dimensions = "m", 2
+
+        async def embed_documents(self, texts):
+            return [[1.0, 0.0] for _ in texts]
+
+        async def embed_queries(self, texts):
+            return [[0.0, 1.0] for _ in texts]
+
+    shared = MemoryCache(100)
+    cached = CachingEmbedder(RoleAware(), max_entries=100, shared=shared)
+    assert (await cached.embed_documents(["Introduction"]))[0] == [1.0, 0.0]
+    assert (await cached.embed_queries(["Introduction"]))[0] == [0.0, 1.0], "not the cached document vector"
+    assert (await cached.embed_documents(["Introduction"]))[0] == [1.0, 0.0]
+    fresh = CachingEmbedder(RoleAware(), max_entries=100, shared=shared)  # another replica, same shared cache
+    assert (await fresh.embed_queries(["Introduction"]))[0] == [0.0, 1.0]
+
+
+def test_embedding_identity_includes_provider_options():
+    """Changing a prefix or pooling must not reuse vectors cached under the old settings."""
+    from src.core.specs import EmbeddingModelSpec
+    from src.models.registry import _identity
+
+    base = EmbeddingModelSpec(provider="huggingface", model="m", dimensions=8, options={"query_prefix": "a "})
+    changed = EmbeddingModelSpec(
+        provider="huggingface", model="m", dimensions=8, options={"query_prefix": "b "}
+    )
+    same = EmbeddingModelSpec(provider="huggingface", model="m", dimensions=8, options={"query_prefix": "a "})
+    assert _identity(base) == _identity(same) != _identity(changed)

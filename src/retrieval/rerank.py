@@ -1,23 +1,44 @@
+"""Built-in rerankers that need no model: ``identity`` (keep the fused order) and ``heuristic``
+(cheap lexical signals). Model-based rerankers live in :mod:`src.models.rerankers`.
+"""
+
 from __future__ import annotations
+
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from src.core.registry import Registries
 from src.core.types import RetrievedDocument
 
+if TYPE_CHECKING:
+    from src.core.config import Settings
+    from src.core.specs import RerankerSpec
+
 _TABLE_TERMS = ("table", "data", "numbers", "statistics")
 
 
-class IdentityReranker:
-    def rerank(self, documents: list[RetrievedDocument], query: str) -> list[RetrievedDocument]:
+class _NoModel:
+    async def start(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
+
+
+class IdentityReranker(_NoModel):
+    async def rerank(self, documents: Sequence[RetrievedDocument], query: str) -> list[RetrievedDocument]:
         for doc in documents:
             doc.rerank_score = doc.score
-        return documents
+        return list(documents)
 
 
-class HeuristicReranker:
+class HeuristicReranker(_NoModel):
     """Multiplies the fused score by cheap relevance signals: keyword overlap, content kind,
-    page context, exact phrase and an early-page bonus."""
+    page context, exact phrase and an early-page bonus. These are hand-set weights, not learned
+    relevance - use a model-based reranker where answer quality matters, and measure the
+    difference with ``rag eval``."""
 
-    def rerank(self, documents: list[RetrievedDocument], query: str) -> list[RetrievedDocument]:
+    async def rerank(self, documents: Sequence[RetrievedDocument], query: str) -> list[RetrievedDocument]:
         lowered = query.lower()
         terms = set(lowered.split())
         for doc in documents:
@@ -39,9 +60,15 @@ class HeuristicReranker:
             if page <= 5:
                 boost += 0.05 * (1 - page / 10)
             doc.rerank_score = doc.score * boost
-        return documents
+        return list(documents)
 
 
 def register_builtin_rerankers(registries: Registries) -> None:
-    registries.rerankers.register("heuristic", lambda settings: HeuristicReranker())
-    registries.rerankers.register("identity", lambda settings: IdentityReranker())
+    def heuristic(name: str, spec: RerankerSpec, settings: Settings) -> HeuristicReranker:
+        return HeuristicReranker()
+
+    def identity(name: str, spec: RerankerSpec, settings: Settings) -> IdentityReranker:
+        return IdentityReranker()
+
+    registries.rerankers.register("heuristic", heuristic)
+    registries.rerankers.register("identity", identity)
