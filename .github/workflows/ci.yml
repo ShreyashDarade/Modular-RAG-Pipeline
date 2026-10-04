@@ -16,7 +16,7 @@ concurrency:
 env:
   # CPU-only torch: the default Linux wheel drags in multi-GB CUDA libraries the tests never use.
   TORCH_INDEX: https://download.pytorch.org/whl/cpu
-  EXTRAS: api,worker,docx,xlsx,mcp,cli,anthropic,google,ollama,dev
+  EXTRAS: api,worker,docx,xlsx,mcp,cli,anthropic,google,ollama,local,dev
 
 jobs:
   lint:
@@ -31,8 +31,8 @@ jobs:
           cache-dependency-path: requirements-dev.txt
       - run: pip install torch torchvision --index-url "$TORCH_INDEX"
       - run: pip install -e ".[$EXTRAS]"
-      - run: ruff check src tests
-      - run: ruff format --check src tests
+      - run: ruff check src tests scripts
+      - run: ruff format --check src tests scripts
       - run: mypy src
 
   unit:
@@ -85,5 +85,13 @@ jobs:
           cache-dependency-path: requirements-dev.txt
       - run: pip install torch torchvision --index-url "$TORCH_INDEX"
       - run: pip install -e ".[$EXTRAS]"
+      # Real-weights tests for the local reranker/embedder skip themselves unless the models are cached.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-test-models-v1
+      - run: >-
+          python -c "from huggingface_hub import snapshot_download as d;
+          [d(r) for r in ('cross-encoder/ms-marco-MiniLM-L6-v2', 'BAAI/bge-small-en-v1.5')]"
       # OCR tests skip themselves unless EasyOCR weights are present; mount them via RAG_TEST_OCR_MODELS to run them.
       - run: pytest tests/integration -q

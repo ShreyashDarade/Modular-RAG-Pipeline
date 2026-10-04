@@ -16,7 +16,14 @@ from typing import Literal, Self
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from src.core.specs import ChatModelSpec, ChunkerSpec, CollectionSpec, EmbeddingModelSpec, RagConfig
+from src.core.specs import (
+    ChatModelSpec,
+    ChunkerSpec,
+    CollectionSpec,
+    EmbeddingModelSpec,
+    RagConfig,
+    RerankerSpec,
+)
 
 
 class Settings(BaseSettings):
@@ -70,6 +77,8 @@ class Settings(BaseSettings):
     azure_openai_api_version: str | None = None
     anthropic_api_key: SecretStr | None = None
     google_api_key: SecretStr | None = None
+    cohere_api_key: SecretStr | None = None
+    jina_api_key: SecretStr | None = None
     ollama_base_url: str | None = None
     model_timeout_seconds: float = 30.0
     model_max_retries: int = 4
@@ -87,8 +96,22 @@ class Settings(BaseSettings):
     # --- retrieval ----------------------------------------------------------------------------
     retriever_top_k: int = Field(default=10, gt=0)
     hybrid_alpha: float = Field(default=0.5, ge=0.0, le=1.0)
-    rerank_enabled: bool = True
+    #: Legacy switch: true selects the ``heuristic`` reranker. Off by default - on a public benchmark it
+    #: scored *below* no reranking at all (docs/evaluation.md); choose a reranker with RERANKER and measure it.
+    rerank_enabled: bool = False
     rerank_top_k: int = Field(default=6, gt=0)
+    #: Fused candidates (best first, across all query variants) handed to the reranker. A model-based
+    #: reranker costs roughly linearly in this; recall can't improve beyond what is in the pool.
+    rerank_candidates: int = Field(default=30, gt=0)
+    #: Put the best chunk of every content kind (text/table/image) first, so a table or scanned-image answer
+    #: is not drowned out by text. Turn off for single-kind corpora or when a model reranker's order is final.
+    retrieval_balance_kinds: bool = True
+    #: Reranker for the synthesised default config: a built-in (heuristic, identity) or a provider
+    #: (cross-encoder, cohere, jina) together with RERANKER_MODEL. Empty: identity (fused order), or the
+    #: heuristic if RERANK_ENABLED=true. With RAG_CONFIG this is ignored - the file names the reranker.
+    reranker: str = ""
+    reranker_model: str = ""
+    reranker_base_url: str | None = None
     query_expansion_enabled: bool = True
     query_expansion_timeout_seconds: float = 5.0
     query_expansion_cache_ttl_seconds: int = 86_400
@@ -192,6 +215,23 @@ class Settings(BaseSettings):
             raise ValueError("INGEST_REFRESH=interval needs a real ES_REFRESH_INTERVAL; -1 never refreshes")
         return self
 
+    @model_validator(mode="after")
+    def _candidates_cover_the_result_size(self) -> Self:
+        if self.rerank_candidates < self.retriever_top_k:
+            if "rerank_candidates" in self.model_fields_set:
+                raise ValueError("RERANK_CANDIDATES must be at least RETRIEVER_TOP_K")
+            self.rerank_candidates = self.retriever_top_k  # an unset pool follows a larger result size
+        return self
+
+    @model_validator(mode="after")
+    def _reranker_options_need_a_model_reranker(self) -> Self:
+        if (self.reranker_model or self.reranker_base_url) and self.reranker in ("", "identity", "heuristic"):
+            raise ValueError(
+                "RERANKER_MODEL / RERANKER_BASE_URL are set but RERANKER is not a model-based reranker "
+                "(cross-encoder, cohere, jina); they would be silently ignored"
+            )
+        return self
+
     @property
     def search_settle_seconds(self) -> float:
         """How long after an ingest the new chunks may still be invisible to search (0: they are not)."""
@@ -228,6 +268,14 @@ def get_settings() -> Settings:
     return Settings()
 
 
+def _legacy_reranker(settings: Settings) -> str:
+    """A built-in named by RERANKER, or - when RERANKER is empty - ``identity`` (``heuristic`` with the
+    legacy RERANK_ENABLED=true)."""
+    if settings.reranker:
+        return settings.reranker
+    return "heuristic" if settings.rerank_enabled else "identity"
+
+
 def load_rag_config(settings: Settings) -> RagConfig:
     """The TOML file if ``RAG_CONFIG`` is set, otherwise one OpenAI chat model, one OpenAI
     embedding model and one collection built from the classic environment variables."""
@@ -238,7 +286,18 @@ def load_rag_config(settings: Settings) -> RagConfig:
         default_collection="default",
         utility_model="default",
         query_expander="llm" if settings.query_expansion_enabled else "identity",
-        reranker="heuristic" if settings.rerank_enabled else "identity",
+        reranker="default" if settings.reranker and settings.reranker_model else _legacy_reranker(settings),
+        reranker_models=(
+            {
+                "default": RerankerSpec(
+                    provider=settings.reranker,
+                    model=settings.reranker_model,
+                    base_url=settings.reranker_base_url,
+                )
+            }
+            if settings.reranker and settings.reranker_model
+            else {}
+        ),
         chat_models={
             "default": ChatModelSpec(
                 provider="openai",

@@ -25,6 +25,7 @@ dependencies = [
     "redis[hiredis]>=8.1",
     "prometheus-client>=0.26",
     "langdetect>=1.0.9",
+    "httpx>=0.28",
 ]
 
 [project.optional-dependencies]
@@ -54,11 +55,16 @@ xlsx = ["openpyxl>=3.1"]
 anthropic = ["langchain-anthropic>=1.7"]
 google = ["langchain-google-genai>=4.4"]
 ollama = ["langchain-ollama>=1.1"]
+# Self-hosted models (no API key): the `huggingface` embedding provider and the `cross-encoder` reranker.
+local = [
+    "transformers>=4.50",
+    "torch>=2.14",
+]
 # Model Context Protocol server.
 mcp = ["mcp>=2.3"]
 cli = ["typer>=0.27"]
 all = [
-    "turinton-rag[api,worker,docx,xlsx,anthropic,google,ollama,mcp,cli]",
+    "turinton-rag[api,worker,docx,xlsx,anthropic,google,ollama,local,mcp,cli]",
 ]
 dev = [
     "pytest>=9.1",

@@ -26,7 +26,7 @@ RUN uv venv /opt/venv
 ENV VIRTUAL_ENV=/opt/venv PATH=/opt/venv/bin:$PATH
 # torch first, from the chosen index, so the worker never pulls the multi-GB CUDA wheels by accident
 RUN case ",${EXTRAS}," in \
-      *,worker,*|*,all,*) uv pip install torch torchvision --index-url "${TORCH_INDEX}" ;; \
+      *,worker,*|*,local,*|*,all,*) uv pip install torch torchvision --index-url "${TORCH_INDEX}" ;; \
     esac
 RUN uv pip install ".[${EXTRAS}]"
 

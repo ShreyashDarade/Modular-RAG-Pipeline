@@ -9,7 +9,7 @@ default_chat_model = "fast"        # used when a request does not name a model
 default_collection = "general"     # used when a request does not name a collection
 utility_model = "fast"             # query expansion and chat question-condensing
 query_expander = "llm"             # "llm" or "identity" (no LLM call during retrieval)
-reranker = "heuristic"             # "heuristic" or "identity"
+reranker = "identity"              # "identity" (fused order) | "heuristic" | the name of a [reranker_models.*] entry below
 
 # --- chat models: choose one per request with {"model": "<name>"} ---------------------------
 [chat_models.fast]
@@ -26,6 +26,19 @@ max_tokens = 2048
 [chat_models.local]                # needs: pip install 'turinton-rag[ollama]' and OLLAMA_BASE_URL
 provider = "ollama"
 model = "llama3.1"
+
+# --- rerankers: a model that reads query and passage together is far more accurate than the ----
+# --- hand-weighted "heuristic". Switch with `reranker = "<name>"` and MEASURE it: `rag eval sweep`.
+# [reranker_models.precise]        # local, no API key: pip install 'turinton-rag[local]'
+# provider = "cross-encoder"
+# model = "cross-encoder/ms-marco-MiniLM-L6-v2"   # or BAAI/bge-reranker-base (slower, stronger)
+# batch_size = 16
+# [reranker_models.precise.options]
+# device = "auto"                  # auto | cpu | cuda | mps
+#
+# [reranker_models.hosted]         # needs COHERE_API_KEY (or provider = "jina" + JINA_API_KEY)
+# provider = "cohere"
+# model = "rerank-v3.5"
 
 # --- embedding models: a collection is tied to one (its index dimensions depend on it) -------
 [embedding_models.small]

@@ -17,8 +17,9 @@ Elasticsearch and Redis).
 | **Many file types** | PDF (text, tables, embedded images), images and multi-page TIFF (OCR), text/Markdown, HTML, CSV/TSV, DOCX, XLSX — one parser per type, add more with a plug-in |
 | **Collections** | Independent corpora, each with its own embedding model, chunker, accepted file types and indices. Ingest into, and search across, any selection of them |
 | **Selective indexing** | Per request choose collections, content *kinds* (`text`, `table`, `image`) and even individual documents. Skipping `image` skips OCR entirely |
-| **Hybrid retrieval** | BM25 + vector search fused with Reciprocal Rank Fusion, cross-reference expansion (same-page / adjacent-page chunks), re-ranking, diversity |
-| **Multiple models** | Named chat and embedding profiles: OpenAI, Azure OpenAI, Anthropic, Google, Ollama (or your own). Pick the chat model per request |
+| **Hybrid retrieval** | BM25 + vector search fused with Reciprocal Rank Fusion, cross-reference expansion (same-page / adjacent-page chunks), **model-based re-ranking** (local cross-encoder, Cohere, Jina) over the merged candidates of all query variants, diversity |
+| **Multiple models** | Named chat and embedding profiles: OpenAI, Azure OpenAI, Anthropic, Google, Ollama, or self-hosted Hugging Face embeddings (or your own). Pick the chat model per request |
+| **Evaluation** | `rag eval`: score retrieval (hit/recall/precision@k, MRR, nDCG with bootstrap CIs) and answers (LLM-judged faithfulness/correctness, citation validity) on your own labelled questions; compare configurations with paired statistics; gate regressions in CI |
 | **Chat** | Multi-turn conversations with question condensing, per-turn model choice, server-sent-event streaming, Redis-backed history |
 | **MCP server** | `search_documents`, `ask_question`, `list_*` tools over stateless Streamable HTTP or stdio — connect Claude Desktop, IDE agents, … |
 | **Scales out** | Stateless API replicas, Redis-Streams job queue with crash recovery, shared cache / rate limits / conversations, load shedding, Prometheus metrics |
@@ -151,6 +152,9 @@ chunk_size = 1200
 chunk_overlap = 150
 ```
 
+A **reranker** is configured the same way (`reranker = "<name>"`, with the model under
+`[reranker_models.<name>]`); see [Evaluation](#evaluation) for how to choose one with data.
+
 See [`config/rag.example.toml`](config/rag.example.toml). **All profiles are built and validated at
 start-up**: a bad provider name, a missing API key or a missing optional package stops the process
 immediately rather than failing on the first request that uses it. A collection is tied to one
@@ -265,6 +269,32 @@ Details, the limits of these numbers (fake models, tiny corpus, shared machine) 
 
 ---
 
+## Evaluation
+
+Whether a change helps is a measurement, not an opinion. `rag eval` runs a labelled question set
+through the real pipeline and scores it:
+
+```bash
+rag eval generate -c legal -n 100 -o cases.jsonl          # draft questions from the corpus (synthetic: review them)
+rag eval run cases.jsonl -c legal --out base.json         # hit/recall/precision/nDCG@k, MRR, latency, 95% CIs
+rag eval sweep cases.jsonl -c legal \
+    -v base:reranker=heuristic -v precise:reranker=precise -v noexp:query_expander=identity
+rag eval run cases.jsonl --answers --judge-model claude   # + faithfulness, correctness, citation validity
+rag eval run cases.jsonl --baseline base.json --max-drop 0.02   # exit 1 on a regression (CI gate)
+```
+
+A case is `{"id", "query", "relevant": [{"source": "report.pdf", "pages": [3]}], "reference_answer", "tags"}`
+per JSON line. Variants override any setting (`hybrid_alpha=0.7`, `rerank_candidates=50`) or config
+field (`reranker`, `query_expander`) and are validated like real configuration. Comparisons use a
+paired bootstrap over the *same* queries, so a difference is reported with an interval, not just a
+number. Everything about the method, the metrics and its limits - and a worked example on a public
+benchmark (BEIR SciFact, real local models) - is in [`docs/evaluation.md`](docs/evaluation.md). Its headline: a
+cross-encoder lifted BM25 by +0.064 nDCG@10, but on top of a strong hybrid first stage neither of two
+cross-encoders helped, and the old hand-weighted default reranker hurt (-0.048) - so reranking is off by
+default and a model reranker is something to switch on *after* measuring it on your data.
+
+---
+
 ## Extending
 
 Everything is registered by name. A **plug-in** is any importable module with a
@@ -326,6 +356,13 @@ Custom providers receive `(model_id, spec, settings)` and return an object satis
   return `202`; `/retrieve` and `/ask` documents gained `collection` and `kind`.
 * Failures are no longer disguised: an LLM error is now a `502` (it used to be a `200` whose
   `answer` contained the error text); an unsupported OCR language or file type is rejected.
+* **Re-ranking changed.** One reranker call now orders the merged candidates of all query variants against
+  the user's own query (it used to run per variant), and `RERANK_CANDIDATES` bounds its cost. The default is
+  now `identity` (keep the fused order): the old hand-weighted `heuristic` scored *below* no reranking on a
+  public benchmark ([`docs/evaluation.md`](docs/evaluation.md)). `RERANK_ENABLED=true` or `reranker = "heuristic"`
+  restores it. (When you search several collections at once, use a model reranker: without one the collections are
+  interleaved by rank, since their first-stage scores are not comparable.) Plug-in rerankers must now be `async` and are registered as factories taking
+  `(name, spec, settings)`; `RetrievedDocument.rerank_score` is `None` until reranked.
 * The file watcher is **off** by default (`WATCH_DATA_DIR=true` to enable); it used to re-ingest every
   upload a second time, concurrently. `ALLOWED_FILE_EXTENSIONS`, `RETRIEVER_BM25_K1/B` and
   `MAX_WORKERS` no longer exist. `license` metadata now matches the repository's MPL-2.0 `LICENSE`.
@@ -363,7 +400,9 @@ deterministic fake models (registered through the real plug-in hook): multi-form
 idempotent re-ingestion, collection isolation, the HTTP API, the job queues including crash
 take-over and heartbeats, a multi-replica + separate-worker topology, MCP over HTTP with the SDK's
 own client, and the CLI. OCR tests use real EasyOCR weights when available (`RAG_TEST_OCR_MODELS`), including a correctly shaped Hindi
-rendering that goes through OCR, ingestion and lexical search. Around 93% of `src/` is covered.
+rendering that goes through OCR, ingestion and lexical search. The evaluation harness is tested against
+hand-computed metric values and end to end through the CLI. Local-model tests use real weights when they are in the Hugging Face
+cache. Around 94% of `src/` is covered.
 
 ---
 

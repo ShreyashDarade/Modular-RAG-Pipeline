@@ -47,6 +47,9 @@ class Searcher(Protocol):
 
     async def fetch(self, indices: Sequence[str], chunk_ids: Sequence[str]) -> list[RawHit]: ...
 
+    async def sample(self, index: str, size: int, seed: int) -> list[RawHit]:
+        """A reproducible pseudo-random sample of up to ``size`` chunks (used to build evaluation sets)."""
+
 
 class DocumentRegistry(Protocol):
     async def get(self, collection: str, source: str) -> DocumentRecord | None: ...

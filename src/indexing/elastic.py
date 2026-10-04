@@ -302,6 +302,23 @@ class ElasticSearcher:
             )
         return self._hits(response)
 
+    async def sample(self, index: str, size: int, seed: int) -> list[RawHit]:
+        async with self._conn.request("sample", SearchError):
+            response = await self._conn.client.search(
+                index=index,
+                size=size,
+                query={
+                    "function_score": {
+                        "query": {"match_all": {}},
+                        "random_score": {"seed": seed, "field": "_seq_no"},
+                        "boost_mode": "replace",
+                    }
+                },
+                source_excludes=["content_vector"],
+                track_total_hits=False,
+            )
+        return self._hits(response)
+
 
 class ElasticDocumentRegistry:
     def __init__(self, connection: ElasticConnection, index: str) -> None:

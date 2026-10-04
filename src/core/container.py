@@ -32,7 +32,8 @@ from src.ingestion.service import IngestionService
 from src.ingestion.storage import DataStore
 from src.models.registry import ModelRegistry
 from src.parsing.registry import ParserSet
-from src.ports.indexing import IndexSpec
+from src.ports.indexing import IndexSpec, Searcher
+from src.ports.retrieval import Reranker
 from src.ports.runtime import Cache, ConversationStore, JobBackend, RateLimiter
 from src.retrieval.hybrid import HybridRetriever
 from src.retrieval.pipeline import RetrievalPipeline
@@ -47,6 +48,7 @@ Role = Literal["api", "worker", "cli", "mcp"]
 @dataclass
 class Container:
     settings: Settings
+    role: Role
     config: RagConfig
     registries: Registries
     cache: Cache
@@ -54,8 +56,10 @@ class Container:
     models: ModelRegistry
     elastic: ElasticConnection
     writer: ElasticIndexWriter
+    searcher: Searcher
     jobs: JobBackend
     conversations: ConversationStore
+    reranker: Reranker
     retrieval: RetrievalPipeline
     answers: AnswerService
     chat: ChatService
@@ -92,17 +96,19 @@ class Container:
         expander = registries.query_expanders.create(
             config.query_expander, settings, models.chat(config.utility_model), cache
         )
-        reranker = registries.rerankers.create(config.reranker, settings)
-        retriever = HybridRetriever(
-            searcher=searcher, models=models, config=config, reranker=reranker, settings=settings
+        reranker_spec = config.reranker_spec()
+        reranker = registries.rerankers.create(
+            reranker_spec.provider, config.reranker, reranker_spec, settings
         )
+        retriever = HybridRetriever(searcher=searcher, models=models, config=config, settings=settings)
         retrieval = RetrievalPipeline(
             expander=expander,
             retriever=retriever,
+            reranker=reranker,
             cache=CachedCall(cache, "retrieval"),
             corpus=corpus,
             settings=settings,
-            fingerprint=f"{config.query_expander}/{config.reranker}/{config.utility_model}",
+            fingerprint=f"{config.query_expander}/{config.utility_model}/{reranker_spec.model_dump_json()}",
         )
         answers = AnswerService(retrieval=retrieval, models=models, settings=settings)
         conversations = registries.conversation_stores.create(settings.chat_store, settings)
@@ -124,6 +130,7 @@ class Container:
         )
         container = cls(
             settings=settings,
+            role=role,
             config=config,
             registries=registries,
             cache=cache,
@@ -131,8 +138,10 @@ class Container:
             models=models,
             elastic=elastic,
             writer=writer,
+            searcher=searcher,
             jobs=jobs,
             conversations=conversations,
+            reranker=reranker,
             retrieval=retrieval,
             answers=answers,
             chat=chat,
@@ -142,7 +151,7 @@ class Container:
             rate_limiter=limiter,
         )
         container._closers = [
-            *(c.close for c in (cache, conversations, jobs)),
+            *(c.close for c in (cache, conversations, jobs, reranker)),
             *([limiter.close] if limiter else []),
             elastic.close,
         ]
@@ -208,6 +217,11 @@ class Container:
             ]
         await self.writer.ensure_indices(specs)
         await self.jobs.start()
+        if self.role in (
+            "api",
+            "mcp",
+        ):  # serving processes fail fast; ingest/delete/eval load it only if used
+            await self.reranker.start()
 
     async def start_watchers(self) -> None:
         if not (self.settings.watch_data_dir and self.ingestion):
