@@ -16,6 +16,6 @@ idempotent operations (reads, ingest - which is idempotent by content checksum) 
 errors for chat turns. Unknown response fields are ignored; malformed required fields are a `ResponseError`.
 
 **Consequences.** A background thread per sync client (documented; use the async classes inside an event loop).
-Defaults live in the facade, once. The extras split changes the meaning of a bare `pip install turinton-rag`.
+Defaults live in the facade, once. The extras split changes the meaning of a bare `pip install ai-rag-info`.
 
 **Enforced by.** `tests/sdk/` parity suite; thin-client import contract; a packaging test in a clean venv.

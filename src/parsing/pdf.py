@@ -34,7 +34,7 @@ class PdfParser:
             import pymupdf
         except ImportError as exc:
             raise ProviderUnavailableError(
-                "PDF parsing needs PyMuPDF: pip install 'turinton-rag[worker]'"
+                "PDF parsing needs PyMuPDF: pip install 'ai-rag-info[worker]'"
             ) from exc
         try:
             document: Any = pymupdf.open(path)  # PyMuPDF ships no type information

@@ -9,7 +9,7 @@ import threading
 import warnings
 
 import pytest
-from turinton_rag import (
+from ai_rag_info import (
     EXPERIMENTAL,
     AsyncRagAPI,
     RagAPI,
@@ -18,18 +18,18 @@ from turinton_rag import (
     deprecated,
     experimental,
 )
-from turinton_rag._backend import IngestOptions, Upload
-from turinton_rag._facade import AsyncRagAPI as Facade
-from turinton_rag._facade import open_upload
-from turinton_rag._sync import LoopThread
-from turinton_rag.errors import (
+from ai_rag_info._backend import IngestOptions, Upload
+from ai_rag_info._facade import AsyncRagAPI as Facade
+from ai_rag_info._facade import open_upload
+from ai_rag_info._sync import LoopThread
+from ai_rag_info.errors import (
     InvalidRequestError,
     NotFoundError,
     ParseError,
     RequestTimeoutError,
     UsageError,
 )
-from turinton_rag.models import JobResponse
+from ai_rag_info.models import JobResponse
 
 
 class RecordingBackend:
@@ -188,7 +188,7 @@ def _shape(signature: inspect.Signature) -> list[tuple[str, str, object]]:
 
 @pytest.mark.parametrize("pair", ["documents", "chat", "jobs", "collections", None])
 def test_the_sync_interface_has_exactly_the_async_methods_with_the_same_arguments(pair):
-    from turinton_rag import _facade, _sync
+    from ai_rag_info import _facade, _sync
 
     sync_cls, async_cls = (
         (RagAPI, AsyncRagAPI)
@@ -318,6 +318,6 @@ def test_experimental_marks_and_registers_names():
 
     assert shiny.__rag_experimental__ is True and "Experimental" in (shiny.__doc__ or "")  # type: ignore[attr-defined]
     assert any(name.endswith("shiny") for name in EXPERIMENTAL)
-    from turinton_rag.embedded import AsyncRag, Rag
+    from ai_rag_info.embedded import AsyncRag, Rag
 
     assert AsyncRag.evaluate.__rag_experimental__ and Rag.evaluate.__rag_experimental__  # type: ignore[attr-defined]

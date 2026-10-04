@@ -83,7 +83,7 @@ def test_json_log_lines_carry_the_request_id_and_extra_fields():
     token = request_id_var.set("req-42")
     try:
         record = logging.LogRecord(
-            "turinton-rag", logging.WARNING, __file__, 1, "model call failed", None, None
+            "ai-rag-info", logging.WARNING, __file__, 1, "model call failed", None, None
         )
         record.request_id = request_id_var.get()
         record.model = "gpt-x"

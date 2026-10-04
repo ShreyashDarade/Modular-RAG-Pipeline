@@ -72,7 +72,7 @@ def _guarded[**P, R](
 def build_mcp_server(get_container: Callable[[], Container]) -> MCPServer:
     guarded = _guarded(get_container)
     server = MCPServer(
-        name="turinton-rag",
+        name="ai-rag-info",
         instructions=(
             "Search and question-answering over a private, multilingual (English/Hindi/Marathi) document "
             "corpus split into collections. Call list_collections first to see what is available; "

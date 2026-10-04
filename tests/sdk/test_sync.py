@@ -14,8 +14,8 @@ from pathlib import Path
 
 import httpx
 import pytest
-from turinton_rag import Rag, RagClient
-from turinton_rag.errors import ConfigError, ConnectionFailedError, NotFoundError, UsageError
+from ai_rag_info import Rag, RagClient
+from ai_rag_info.errors import ConfigError, ConnectionFailedError, NotFoundError, UsageError
 
 from tests.conftest import ES_URL
 from tests.sdk.conftest import TEXT
@@ -175,7 +175,7 @@ def test_the_embedded_blocking_engine(sdk_settings, tmp_path: Path):
 async def test_an_engine_without_ingestion_says_so_instead_of_queueing_forever(
     sdk_settings, run_id, tmp_path
 ):
-    from turinton_rag import AsyncRag
+    from ai_rag_info import AsyncRag
 
     from tests.sdk.conftest import _drop_indices
 

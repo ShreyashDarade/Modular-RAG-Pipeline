@@ -161,3 +161,7 @@ MANIFEST
 # Tooling caches
 .ruff_cache/
 .mypy_cache/
+
+# Tool caches
+.import_linter_cache/
+.grimp_cache/

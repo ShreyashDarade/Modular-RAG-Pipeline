@@ -24,7 +24,7 @@ from src.ports.parsing import Chunker, ParsedUnit, Parser
 from src.ports.retrieval import QueryExpander, Reranker
 from src.ports.runtime import Cache, ConversationStore
 
-from turinton_rag._compat import experimental
+from ai_rag_info._compat import experimental
 
 
 class ConformanceError(AssertionError):

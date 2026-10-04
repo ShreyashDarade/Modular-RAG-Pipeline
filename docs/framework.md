@@ -19,7 +19,7 @@ leaves everything else free to change:
 |---|---|
 | the **ports** - small `Protocol`s every part implements | which Elasticsearch/Redis/LLM/OCR library sits behind a port |
 | the **wire contract** - the `/api/v1` REST shapes and error codes | how a route or a service computes its answer |
-| the **public SDK surface** - what `turinton_rag` exports | everything under `src.*` |
+| the **public SDK surface** - what `ai_rag_info` exports | everything under `src.*` |
 | the **layering rule** - who may import whom | file layout inside a layer |
 
 New capability enters as: (1) a port or contract change, reviewed as such (an ADR if it is not additive),
@@ -31,7 +31,7 @@ public-surface checks.
 Higher layers may import lower layers, never the reverse. Siblings on one row do not import each other.
 
 ```
- turinton_rag.embedded (SDK, in-process)  |  turinton_rag.client (SDK, HTTP)        <- public
+ ai_rag_info.embedded (SDK, in-process)  |  ai_rag_info.client (SDK, HTTP)        <- public
  -----------------------------------------------------------------------------
  api | cli | worker                           driving adapters (HTTP, terminal, queue worker)
  mcp_server | evaluation                      driving adapters / offline tools
@@ -80,7 +80,7 @@ A **plug-in** is a module with `register(registries)`, enabled by `PLUGINS=["pkg
 *name*; asking for an unregistered name is an `UnknownComponentError` that lists the valid names. There is no
 default and no fallback.
 
-*Enforced by:* conformance checks (`turinton_rag.testing`) that every built-in component passes in CI and that
+*Enforced by:* conformance checks (`ai_rag_info.testing`) that every built-in component passes in CI and that
 plug-in authors can run on theirs. Dynamic loading is invisible to the import graph, so conformance - not the
 linter - is what guards it.
 
@@ -105,11 +105,11 @@ parity suite.
 
 ## 5. One SDK, two transports
 
-`pip install turinton-rag` gives a **thin client**; extras add the engine (see the README for the extras map).
+`pip install ai-rag-info` gives a **thin client**; extras add the engine (see the README for the extras map).
 
 ```python
-from turinton_rag import AsyncRagClient, RagClient      # HTTP, thin: httpx + pydantic only
-from turinton_rag import AsyncRag, Rag                  # in-process engine (needs turinton-rag[engine])
+from ai_rag_info import AsyncRagClient, RagClient      # HTTP, thin: httpx + pydantic only
+from ai_rag_info import AsyncRag, Rag                  # in-process engine (needs ai-rag-info[engine])
 ```
 
 * **One facade, written once** (`documents`, `chat`, `jobs`, `collections`, `retrieve`, `ask`) over a narrow
@@ -131,17 +131,17 @@ HTTP client (through the real FastAPI app), and one test points both at the *sam
 
 ## 6. Public API surface and stability tiers
 
-* **Public** = names exported in `turinton_rag.__all__` (and its documented submodules `models`, `errors`,
+* **Public** = names exported in `ai_rag_info.__all__` (and its documented submodules `models`, `errors`,
   `extend`, `testing`). Everything under `src.*` and every underscore-prefixed name is **internal** with no
   compatibility promise. (`src` is the engine's historical top-level name; renaming it is tracked in ADR 0003.)
 * **Tiers.** *Stable* is the default for public names. *Experimental* names are marked `@experimental` (greppable;
-  listed in `turinton_rag.EXPERIMENTAL`) and may change in any minor release: today `evaluate`, `testing`.
+  listed in `ai_rag_info.EXPERIMENTAL`) and may change in any minor release: today `evaluate`, `testing`.
 * **Typed.** The package ships `py.typed`; the public interface is fully annotated and checked with strict mypy
-  settings (`[[tool.mypy.overrides]]` for `turinton_rag.*`: no untyped defs, no implicit re-exports, no `Any` returns).
+  settings (`[[tool.mypy.overrides]]` for `ai_rag_info.*`: no untyped defs, no implicit re-exports, no `Any` returns).
   A private type never appears in a public signature.
 
 *Enforced by:* an API-surface snapshot (`tests/sdk/api_surface.txt`, regenerated explicitly) and `griffe check`
-against the latest release tag in CI; strict mypy settings on `turinton_rag`; a test that every `__all__` name
+against the latest release tag in CI; strict mypy settings on `ai_rag_info`; a test that every `__all__` name
 resolves, is documented and is in the snapshot.
 
 ## 7. Versioning and deprecation
@@ -152,12 +152,12 @@ resolves, is documented and is in the snapshot.
   deprecated, and is removed no earlier than the next major (the floor from pandas PDEP-17 and NumPy NEP 23).
   People upgrade slowly; when in doubt the window is longer.
 * **Every deprecation carries metadata** - the version it was deprecated in, the version it will be removed in,
-  the replacement (or the reason there is none) - through one decorator, `turinton_rag.deprecated(...)`. It
+  the replacement (or the reason there is none) - through one decorator, `ai_rag_info.deprecated(...)`. It
   raises `RagDeprecationWarning` (a `DeprecationWarning` subclass) with a correct `stacklevel`; in the last
   minor before removal it escalates to `RagFutureWarning` so it is visible outside `__main__`.
 * **The wire contract has its own window:** a deprecated endpoint or field is announced in the OpenAPI document
   (`deprecated: true`) and the release notes for at least two minors before `/api/v2` drops it.
-* The test suite runs with `-W error::turinton_rag.RagDeprecationWarning`: nothing in this repo may use a name
+* The test suite runs with `-W error::ai_rag_info.RagDeprecationWarning`: nothing in this repo may use a name
   it has deprecated.
 
 ## 8. Governance: what runs where
@@ -168,7 +168,7 @@ resolves, is documented and is in the snapshot.
 | every package has a layer | classification test | `tests/architecture/` |
 | wire contract changes are visible | OpenAPI snapshot | `tests/contract/` |
 | public surface changes are visible | API-surface snapshot; `griffe check` vs last tag | `tests/sdk/`, CI `api-compat` |
-| public interface is typed | strict mypy settings on `turinton_rag`; `py.typed` in the wheel | CI `lint`, packaging test |
+| public interface is typed | strict mypy settings on `ai_rag_info`; `py.typed` in the wheel | CI `lint`, packaging test |
 | embedded and HTTP transports agree | parity suite | `tests/sdk/` |
 | plug-in contracts hold | conformance checks | `tests/conformance/` |
 | deprecations are well-formed and unused | decorator validation; `-W error` | unit tests |

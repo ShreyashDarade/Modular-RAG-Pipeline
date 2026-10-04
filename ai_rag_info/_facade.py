@@ -1,7 +1,7 @@
 """The public interface, written once.
 
 Method names, argument names, defaults, request validation and the typed errors for bad input are defined
-here and nowhere else; the transport (HTTP or in-process) sits behind :class:`~turinton_rag._backend.Backend`.
+here and nowhere else; the transport (HTTP or in-process) sits behind :class:`~ai_rag_info._backend.Backend`.
 That is what keeps the two modes from drifting apart (``docs/adr/0005``).
 """
 
@@ -36,8 +36,8 @@ from src.contracts.models import (
 from src.core.errors import InvalidRequestError, NotFoundError, RequestTimeoutError, error_from_code
 from src.core.types import ContentKind
 
-from turinton_rag._backend import Backend, IngestOptions, Upload
-from turinton_rag._compat import internal_init
+from ai_rag_info._backend import Backend, IngestOptions, Upload
+from ai_rag_info._compat import internal_init
 
 #: What ``documents.ingest`` accepts as its source.
 IngestSource = str | os.PathLike[str] | bytes | bytearray | memoryview | BinaryIO
@@ -232,8 +232,8 @@ class AsyncCollections:
 
 @internal_init
 class AsyncRagAPI:
-    """The interface of the SDK. Use :class:`~turinton_rag.AsyncRagClient` (HTTP) or
-    :class:`~turinton_rag.AsyncRag` (in-process); annotate with this class to accept either."""
+    """The interface of the SDK. Use :class:`~ai_rag_info.AsyncRagClient` (HTTP) or
+    :class:`~ai_rag_info.AsyncRag` (in-process); annotate with this class to accept either."""
 
     documents: AsyncDocuments
     chat: AsyncChat

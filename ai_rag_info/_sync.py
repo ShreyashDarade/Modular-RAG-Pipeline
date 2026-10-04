@@ -30,8 +30,8 @@ from src.contracts.models import (
 from src.core.errors import UsageError
 from src.core.types import ContentKind
 
-from turinton_rag._compat import internal_init
-from turinton_rag._facade import AsyncRagAPI, IngestSource
+from ai_rag_info._compat import internal_init
+from ai_rag_info._facade import AsyncRagAPI, IngestSource
 
 T = TypeVar("T")
 
@@ -41,7 +41,7 @@ class LoopThread:
         self._owner = owner
         self._loop = asyncio.new_event_loop()
         self._ready = threading.Event()
-        self._thread = threading.Thread(target=self._run, name=f"turinton-rag-{owner}", daemon=True)
+        self._thread = threading.Thread(target=self._run, name=f"ai-rag-info-{owner}", daemon=True)
         self._thread.start()
         self._ready.wait()
         self._closed = False
@@ -121,7 +121,7 @@ class Documents:
         wait: bool | None = None,
         timeout: float | None = None,
     ) -> IngestResponse:
-        """See :meth:`turinton_rag.AsyncRagAPI.documents` ``ingest``."""
+        """See :meth:`ai_rag_info.AsyncRagAPI.documents` ``ingest``."""
         return self._bridge.run(
             self._a.ingest(
                 source,
@@ -219,7 +219,7 @@ class Collections:
 
 @internal_init
 class RagAPI:
-    """The blocking interface: the same operations as :class:`~turinton_rag.AsyncRagAPI`."""
+    """The blocking interface: the same operations as :class:`~ai_rag_info.AsyncRagAPI`."""
 
     documents: Documents
     chat: Chat

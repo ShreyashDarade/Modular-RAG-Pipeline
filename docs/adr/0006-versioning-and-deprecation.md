@@ -7,7 +7,7 @@ dependency was not capped; pandas and NumPy publish numeric, checkable windows.
 
 **Decision.** SemVer for the public surface and the wire contract; no deprecation or removal in a patch release;
 a deprecated name works unchanged for at least two minor releases and is removed no earlier than the next major.
-Deprecations go through `turinton_rag.deprecated(since, remove_in, alternative)` (metadata is mandatory) and
+Deprecations go through `ai_rag_info.deprecated(since, remove_in, alternative)` (metadata is mandatory) and
 warn with `RagDeprecationWarning`, escalating to `RagFutureWarning` in the last minor. Internal packages that
 ship together are pinned to the same version.
 

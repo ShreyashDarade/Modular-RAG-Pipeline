@@ -58,7 +58,7 @@ def test_every_engine_package_is_assigned_a_layer(module: str):
 
 @pytest.mark.parametrize(
     "module",
-    [f"turinton_rag.{p.stem}" for p in sorted((ROOT / "turinton_rag").glob("*.py")) if p.stem != "__init__"],
+    [f"ai_rag_info.{p.stem}" for p in sorted((ROOT / "ai_rag_info").glob("*.py")) if p.stem != "__init__"],
 )
 def test_every_sdk_module_is_classified_as_thin_or_engine_side(module: str):
     assert module in _thin_units() or _covered(module, _layer_units()), (
@@ -67,19 +67,19 @@ def test_every_sdk_module_is_classified_as_thin_or_engine_side(module: str):
 
 
 def test_the_thin_client_set_is_what_the_client_actually_imports():
-    """The modules `turinton_rag.client` pulls in must all be listed as thin - otherwise the purity contract
+    """The modules `ai_rag_info.client` pulls in must all be listed as thin - otherwise the purity contract
     would not be checking them."""
     import grimp
 
-    graph = grimp.build_graph("turinton_rag", "src")
+    graph = grimp.build_graph("ai_rag_info", "src")
     imported = set()
-    frontier = ["turinton_rag.client"]
+    frontier = ["ai_rag_info.client"]
     while frontier:
         current = frontier.pop()
         for dep in graph.find_modules_directly_imported_by(current):
-            if dep.startswith("turinton_rag") and dep not in imported:
+            if dep.startswith("ai_rag_info") and dep not in imported:
                 imported.add(dep)
                 frontier.append(dep)
-    assert imported - {"turinton_rag"} <= _thin_units(), (
+    assert imported - {"ai_rag_info"} <= _thin_units(), (
         f"unlisted thin-client modules: {imported - _thin_units()}"
     )

@@ -1,4 +1,4 @@
-"""The packaging promise (docs/adr/0005): `pip install turinton-rag` is a thin client.
+"""The packaging promise (docs/adr/0005): `pip install ai-rag-info` is a thin client.
 
 Builds the wheel, installs it into a brand-new virtualenv *without extras*, and checks from the outside that
 the client works, that nothing of the engine is installed or imported, and that asking for the in-process SDK
@@ -21,7 +21,7 @@ pytestmark = [pytest.mark.packaging, pytest.mark.skipif(shutil.which("uv") is No
 ROOT = Path(__file__).resolve().parents[2]
 #: What the thin install may contain: the client's two dependencies and their own dependencies.
 ALLOWED = {
-    "turinton-rag", "pydantic", "pydantic-core", "annotated-types", "typing-extensions", "typing-inspection",
+    "ai-rag-info", "pydantic", "pydantic-core", "annotated-types", "typing-extensions", "typing-inspection",
     "httpx", "httpcore", "h11", "anyio", "idna", "certifi", "sniffio",
 }  # fmt: skip
 ENGINE_LIBS = [
@@ -37,8 +37,8 @@ ENGINE_LIBS = [
 PROGRAM = r"""
 import importlib.util, json, sys
 import httpx
-from turinton_rag import RagClient, AsyncRagClient
-from turinton_rag.errors import NotFoundError, RagError
+from ai_rag_info import RagClient, AsyncRagClient
+from ai_rag_info.errors import NotFoundError, RagError
 
 def handler(request):
     if request.url.path.endswith("/retrieve"):
@@ -61,7 +61,7 @@ print(json.dumps({
     "rag_hint": None,
 }))
 try:
-    import turinton_rag; turinton_rag.Rag
+    import ai_rag_info; ai_rag_info.Rag
 except ImportError as exc:
     print("HINT=" + str(exc))
 """.replace("__LIBS__", repr(ENGINE_LIBS))
@@ -72,7 +72,7 @@ def test_a_bare_install_is_a_working_thin_client(tmp_path: Path):
     subprocess.run(
         ["uv", "build", "--wheel", "--out-dir", str(dist), str(ROOT)], check=True, capture_output=True
     )
-    wheel = next(dist.glob("turinton_rag-*.whl"))
+    wheel = next(dist.glob("ai_rag_info-*.whl"))
     venv = tmp_path / "venv"
     subprocess.run(["uv", "venv", "--python", sys.executable, str(venv)], check=True, capture_output=True)
     python = str(venv / "bin" / "python")
@@ -95,10 +95,10 @@ def test_a_bare_install_is_a_working_thin_client(tmp_path: Path):
     assert report["result"] == ["q", "NotFoundError", "not_found", "r-1"]
     assert report["engine_imported"] == [] and report["engine_installed"] == []
     hint = next(line for line in out if line.startswith("HINT="))
-    assert "pip install 'turinton-rag[engine]'" in hint
+    assert "pip install 'ai-rag-info[engine]'" in hint
 
     names = subprocess.run(
-        [python, "-c", "import importlib.metadata as m; print(m.requires('turinton-rag'))"],
+        [python, "-c", "import importlib.metadata as m; print(m.requires('ai-rag-info'))"],
         capture_output=True,
         text=True,
         check=True,
@@ -116,8 +116,8 @@ def test_the_wheel_ships_py_typed_and_both_packages(tmp_path: Path):
     with zipfile.ZipFile(next(dist.glob("*.whl"))) as z:
         files = set(z.namelist())
     assert (
-        "turinton_rag/py.typed" in files
-        and "turinton_rag/client.py" in files
+        "ai_rag_info/py.typed" in files
+        and "ai_rag_info/client.py" in files
         and "src/application/service.py" in files
     )
     assert not any(f.startswith(("tests/", "docs/", "scripts/")) for f in files), (

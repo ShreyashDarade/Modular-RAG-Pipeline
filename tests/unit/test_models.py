@@ -104,7 +104,7 @@ def test_a_missing_optional_package_names_the_extra_to_install(monkeypatch):
         return real(name, *a, **k)
 
     monkeypatch.setattr(importlib, "import_module", fake_import)
-    with pytest.raises(ProviderUnavailableError, match=r"turinton-rag\[anthropic\]"):
+    with pytest.raises(ProviderUnavailableError, match=r"ai-rag-info\[anthropic\]"):
         registries().chat_providers.create(
             "anthropic", "m", ChatModelSpec(provider="anthropic", model="x"), Settings(_env_file=None, **KEYS)
         )

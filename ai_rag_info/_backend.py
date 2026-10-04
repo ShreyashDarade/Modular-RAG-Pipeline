@@ -1,7 +1,7 @@
 """The narrow contract between the public facade and a transport (internal).
 
-Two implementations exist: the HTTP backend (:mod:`turinton_rag._http`) and the embedded backend
-(:mod:`turinton_rag.embedded`). Everything the user sees - method names, argument names, defaults, validation,
+Two implementations exist: the HTTP backend (:mod:`ai_rag_info._http`) and the embedded backend
+(:mod:`ai_rag_info.embedded`). Everything the user sees - method names, argument names, defaults, validation,
 error types - lives in the facade, once; a backend only moves already-validated request models to wherever the
 engine is and brings response models back.
 """

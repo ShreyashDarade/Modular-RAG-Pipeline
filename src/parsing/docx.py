@@ -33,7 +33,7 @@ class DocxParser:
             from docx.text.paragraph import Paragraph
         except ImportError as exc:
             raise ProviderUnavailableError(
-                "DOCX parsing needs python-docx: pip install 'turinton-rag[docx]'"
+                "DOCX parsing needs python-docx: pip install 'ai-rag-info[docx]'"
             ) from exc
         try:
             document = docx.Document(str(path))

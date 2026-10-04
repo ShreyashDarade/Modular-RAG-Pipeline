@@ -28,7 +28,7 @@ def require_stack() -> tuple[Any, Any]:
         return importlib.import_module("torch"), importlib.import_module("transformers")
     except ImportError as exc:
         raise ProviderUnavailableError(
-            f"{exc.name} is not installed; install the 'local' extra: pip install 'turinton-rag[local]'"
+            f"{exc.name} is not installed; install the 'local' extra: pip install 'ai-rag-info[local]'"
         ) from exc
 
 

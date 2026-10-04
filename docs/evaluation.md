@@ -99,7 +99,7 @@ asks one **reranker** to order the best `RERANK_CANDIDATES` (default 30) against
 |---|---|---|
 | `identity` (default) | keep the fused order | |
 | `heuristic` | hand-weighted keyword/page/kind boosts | opt-in; see the result below |
-| `cross-encoder` | a local relevance model (`pip install 'turinton-rag[local]'`) | CPU or GPU, no API key; `model = "cross-encoder/ms-marco-MiniLM-L6-v2"`, `BAAI/bge-reranker-base`, ... |
+| `cross-encoder` | a local relevance model (`pip install 'ai-rag-info[local]'`) | CPU or GPU, no API key; `model = "cross-encoder/ms-marco-MiniLM-L6-v2"`, `BAAI/bge-reranker-base`, ... |
 | `cohere`, `jina` | hosted rerank API (`COHERE_API_KEY` / `JINA_API_KEY`) | `base_url` points at any compatible server |
 
 ```toml

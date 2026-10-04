@@ -12,9 +12,9 @@ from pathlib import Path
 
 import httpx
 import pytest
+from ai_rag_info import AsyncRag, AsyncRagAPI, AsyncRagClient
 from src.api.server import create_app
 from src.core.config import Settings
-from turinton_rag import AsyncRag, AsyncRagAPI, AsyncRagClient
 
 MODES = ["embedded", "remote"]
 

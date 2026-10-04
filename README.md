@@ -70,7 +70,7 @@ src/
   application/  RagService: every use case, implemented once; HTTP and the embedded SDK are thin adapters over it
   evaluation/   offline retrieval / answer evaluation (rag eval)
   api/ cli/ mcp_server/ worker.py                        (entry points)
-turinton_rag/   the public Python SDK (client, in-process engine, errors, models, extension + testing helpers)
+ai_rag_info/   the public Python SDK (client, in-process engine, errors, models, extension + testing helpers)
 ```
 
 How that maps to SOLID, concretely:
@@ -141,7 +141,7 @@ provider = "openai"
 model = "gpt-4o-mini"
 
 [chat_models.claude]
-provider = "anthropic"                 # pip install 'turinton-rag[anthropic]'
+provider = "anthropic"                 # pip install 'ai-rag-info[anthropic]'
 model = "claude-sonnet-5-5"
 
 [embedding_models.small]
@@ -223,12 +223,12 @@ any request). Behind a real domain also set `MCP_ALLOWED_HOSTS=["rag.example.com
 
 ## Python SDK
 
-One package, two ways to use the same interface. `pip install turinton-rag` is a **thin client**
+One package, two ways to use the same interface. `pip install ai-rag-info` is a **thin client**
 (`httpx` + `pydantic`, a dozen packages in all); the engine is an extra.
 
 ```python
 # Remote: talk to a running server. Thin install.
-from turinton_rag import RagClient                    # blocking;  AsyncRagClient is the async one
+from ai_rag_info import RagClient                    # blocking;  AsyncRagClient is the async one
 
 with RagClient("http://localhost:8000", api_key="...") as rag:
     rag.documents.ingest("report.pdf", collection="finance")
@@ -240,8 +240,8 @@ with RagClient("http://localhost:8000", api_key="...") as rag:
 ```
 
 ```python
-# Embedded: the whole pipeline inside your application.  pip install 'turinton-rag[engine,worker]'
-from turinton_rag import AsyncRag
+# Embedded: the whole pipeline inside your application.  pip install 'ai-rag-info[engine,worker]'
+from ai_rag_info import AsyncRag
 
 async with await AsyncRag.create() as rag:            # configuration: env / .env / RAG_CONFIG, as for the server
     await rag.documents.ingest("report.pdf")
@@ -250,7 +250,7 @@ async with await AsyncRag.create() as rag:            # configuration: env / .en
 ```
 
 * **Same interface, same models, same errors in both modes.** The public methods are written once
-  (`turinton_rag/_facade.py`) over a narrow transport protocol; the HTTP and in-process backends only move
+  (`ai_rag_info/_facade.py`) over a narrow transport protocol; the HTTP and in-process backends only move
   requests. A `404 not_found` over HTTP and a `NotFoundError` in-process are the same exception, with the same
   `code`; errors rebuilt from a response also carry `request_id` and `details` (e.g. the failed job's id).
 * **Capability differences are explicit.** `evaluate()` and `.engine` exist only on `Rag` / `AsyncRag`; the HTTP
@@ -262,22 +262,22 @@ async with await AsyncRag.create() as rag:            # configuration: env / .en
   checksum) - a chat turn is never re-sent after a gateway error, because it may already have been recorded.
   `Retry-After` is honoured. Responses are validated strictly (a malformed one is a `ResponseError`) but unknown
   fields are ignored, so a newer server never breaks an older SDK.
-* **Extending** uses the same package: `turinton_rag.extend` has the port protocols a plug-in implements, and
-  `turinton_rag.testing` has `check_embedder`, `check_reranker`, `check_parser`, ... - the conformance checks the
+* **Extending** uses the same package: `ai_rag_info.extend` has the port protocols a plug-in implements, and
+  `ai_rag_info.testing` has `check_embedder`, `check_reranker`, `check_parser`, ... - the conformance checks the
   built-in components pass in CI - so a plug-in can prove it honours the contract.
 
-What is public, how it may change, and how deprecations work (`turinton_rag.deprecated`, a two-minor-release
+What is public, how it may change, and how deprecations work (`ai_rag_info.deprecated`, a two-minor-release
 window) are in [`docs/framework.md`](docs/framework.md). Everything under `src.*` is internal.
 
 ### Install matrix
 
 | You want | Install |
 |---|---|
-| a client for a server somebody runs | `pip install turinton-rag` |
-| the pipeline inside your application | `pip install 'turinton-rag[engine]'` (+ `worker` to parse PDFs / run OCR, `local` for self-hosted models) |
-| an API replica | `pip install 'turinton-rag[api]'` (the Docker `EXTRAS` build argument) |
-| an ingestion worker | `pip install 'turinton-rag[worker,docx,xlsx]'` |
-| everything | `pip install 'turinton-rag[all]'` |
+| a client for a server somebody runs | `pip install ai-rag-info` |
+| the pipeline inside your application | `pip install 'ai-rag-info[engine]'` (+ `worker` to parse PDFs / run OCR, `local` for self-hosted models) |
+| an API replica | `pip install 'ai-rag-info[api]'` (the Docker `EXTRAS` build argument) |
+| an ingestion worker | `pip install 'ai-rag-info[worker,docx,xlsx]'` |
+| everything | `pip install 'ai-rag-info[all]'` |
 
 ---
 
@@ -461,8 +461,8 @@ pip install -e ".[all,dev]"
 pytest tests/unit tests/architecture tests/contract tests/conformance    # no services needed
 pytest tests/integration tests/sdk     # needs Elasticsearch (RAG_TEST_ES_URL) and Redis (RAG_TEST_REDIS_URL)
 pytest -m packaging tests/sdk/test_packaging.py   # builds the wheel, installs it bare into a clean venv (needs uv)
-ruff check src tests scripts turinton_rag && ruff format --check src tests scripts turinton_rag
-mypy src turinton_rag                  # turinton_rag (the public SDK) is held to strict typing
+ruff check src tests scripts ai_rag_info && ruff format --check src tests scripts ai_rag_info
+mypy src ai_rag_info                  # ai_rag_info (the public SDK) is held to strict typing
 lint-imports                           # architecture contracts (layering, third-party confinement, thin client)
 python scripts/export_openapi.py       # after an intentional wire-contract change; tests/contract fails until you do
 python scripts/api_surface.py --write  # after an intentional public-API change

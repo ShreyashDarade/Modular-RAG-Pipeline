@@ -1,5 +1,5 @@
 """Every built-in component - and the fake plug-in used across the suite - passes the conformance checks that
-plug-in authors are given (``turinton_rag.testing``). And the checks themselves fail on implementations that
+plug-in authors are given (``ai_rag_info.testing``). And the checks themselves fail on implementations that
 break the contract: a check that cannot fail proves nothing."""
 
 from __future__ import annotations
@@ -9,15 +9,7 @@ from pathlib import Path
 
 import httpx
 import pytest
-from pydantic import SecretStr
-from src.core.bootstrap import build_registries
-from src.core.config import Settings
-from src.core.specs import EmbeddingModelSpec, RerankerSpec
-from src.models.adapters import CachingEmbedder
-from src.models.rerankers import ApiReranker, CrossEncoderReranker
-from src.retrieval.rerank import HeuristicReranker, IdentityReranker
-from src.runtime.cache import MemoryCache, TieredCache
-from turinton_rag.testing import (
+from ai_rag_info.testing import (
     ConformanceError,
     check_cache,
     check_chat_model,
@@ -28,6 +20,14 @@ from turinton_rag.testing import (
     check_query_expander,
     check_reranker,
 )
+from pydantic import SecretStr
+from src.core.bootstrap import build_registries
+from src.core.config import Settings
+from src.core.specs import EmbeddingModelSpec, RerankerSpec
+from src.models.adapters import CachingEmbedder
+from src.models.rerankers import ApiReranker, CrossEncoderReranker
+from src.retrieval.rerank import HeuristicReranker, IdentityReranker
+from src.runtime.cache import MemoryCache, TieredCache
 
 from tests.fake_plugin import HashEmbedder, OverlapReranker, ScriptedChat
 from tests.unit.tiny_models import save_tiny_bert

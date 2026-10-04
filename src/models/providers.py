@@ -34,7 +34,7 @@ def _import(module: str, extra: str) -> Any:
         return importlib.import_module(module)
     except ImportError as exc:
         raise ProviderUnavailableError(
-            f"{module} is not installed; install the '{extra}' extra: pip install 'turinton-rag[{extra}]'"
+            f"{module} is not installed; install the '{extra}' extra: pip install 'ai-rag-info[{extra}]'"
         ) from exc
 
 

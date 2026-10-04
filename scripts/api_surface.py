@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Describe the public API surface of ``turinton_rag`` as text (docs/framework.md, section 6).
+"""Describe the public API surface of ``ai_rag_info`` as text (docs/framework.md, section 6).
 
 ``tests/sdk/api_surface.txt`` holds the checked-in description and ``tests/sdk/test_api_surface.py`` fails when
 the code no longer matches it, so every change to what is public - a new name, a removed one, a changed
@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 TARGET = ROOT / "tests" / "sdk" / "api_surface.txt"
-SUBMODULES = ("turinton_rag.models", "turinton_rag.errors", "turinton_rag.extend", "turinton_rag.testing")
+SUBMODULES = ("ai_rag_info.models", "ai_rag_info.errors", "ai_rag_info.extend", "ai_rag_info.testing")
 RESOURCES = ("documents", "chat", "jobs", "collections")
 
 
@@ -75,22 +75,22 @@ def _describe_class(label: str, cls: type) -> list[str]:
 
 def describe() -> str:
     out: list[str] = [
-        "# Public API surface of turinton_rag. Regenerate: python scripts/api_surface.py --write",
+        "# Public API surface of ai_rag_info. Regenerate: python scripts/api_surface.py --write",
         "",
     ]
-    top = importlib.import_module("turinton_rag")
-    out.append("## turinton_rag")
+    top = importlib.import_module("ai_rag_info")
+    out.append("## ai_rag_info")
     for name in sorted(top.__all__):
         obj = getattr(top, name)
         if inspect.isclass(obj):
-            out += _describe_class(f"turinton_rag.{name}", obj)
+            out += _describe_class(f"ai_rag_info.{name}", obj)
         elif callable(obj):
-            out.append(f"def turinton_rag.{name}{_signature(obj)}")
+            out.append(f"def ai_rag_info.{name}{_signature(obj)}")
         else:
             out.append(f"{name}: {type(obj).__name__}")
     # the resource objects are part of the interface: describe their classes too
-    facade = importlib.import_module("turinton_rag._facade")
-    sync = importlib.import_module("turinton_rag._sync")
+    facade = importlib.import_module("ai_rag_info._facade")
+    sync = importlib.import_module("ai_rag_info._sync")
     out += ["", "## resources (reached as rag.documents, rag.chat, rag.jobs, rag.collections)"]
     for res in RESOURCES:
         out += _describe_class(f"Async{res.capitalize()}", getattr(facade, f"Async{res.capitalize()}"))

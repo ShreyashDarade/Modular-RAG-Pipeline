@@ -57,7 +57,7 @@ class XlsxParser:
             from openpyxl import load_workbook
         except ImportError as exc:
             raise ProviderUnavailableError(
-                "XLSX parsing needs openpyxl: pip install 'turinton-rag[xlsx]'"
+                "XLSX parsing needs openpyxl: pip install 'ai-rag-info[xlsx]'"
             ) from exc
         try:
             workbook = load_workbook(path, read_only=True, data_only=True)

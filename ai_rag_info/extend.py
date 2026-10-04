@@ -2,7 +2,7 @@
 
 A plug-in is a module with ``register(registries)``, enabled with ``PLUGINS=["pkg.module"]``. It adds
 components *by name* to the registries below; the engine never discovers anything implicitly. Each port
-is a small ``Protocol`` - implement only what it lists. ``turinton_rag.testing`` has a conformance check
+is a small ``Protocol`` - implement only what it lists. ``ai_rag_info.testing`` has a conformance check
 for each, so a plug-in can prove it honours the contract.
 """
 

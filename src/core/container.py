@@ -171,7 +171,7 @@ class Container:
         except ImportError as exc:
             raise ConfigError(
                 "this process is configured to run ingestion but the worker dependencies are not installed: "
-                "pip install 'turinton-rag[worker]', or set INGEST_EMBEDDED_WORKER=false and run `rag-worker` separately"
+                "pip install 'ai-rag-info[worker]', or set INGEST_EMBEDDED_WORKER=false and run `rag-worker` separately"
             ) from exc
         from src.ingestion.ocr import LazyOcr
 

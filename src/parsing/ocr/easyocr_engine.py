@@ -68,7 +68,7 @@ class EasyOcrEngine:
             import torch
         except ImportError as exc:
             raise ConfigError(
-                "OCR needs EasyOCR and torch: pip install 'turinton-rag[worker]' (or set OCR_ENABLED=false)"
+                "OCR needs EasyOCR and torch: pip install 'ai-rag-info[worker]' (or set OCR_ENABLED=false)"
             ) from exc
         self._easyocr = easyocr
         self._gpu = settings.ocr_gpu_enabled and torch.cuda.is_available()

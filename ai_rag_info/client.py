@@ -9,10 +9,10 @@ from collections.abc import Mapping
 
 import httpx
 
-from turinton_rag._facade import AsyncRagAPI
-from turinton_rag._http import HttpBackend
-from turinton_rag._sync import RagAPI, bridge_for
-from turinton_rag._version import __version__
+from ai_rag_info._facade import AsyncRagAPI
+from ai_rag_info._http import HttpBackend
+from ai_rag_info._sync import RagAPI, bridge_for
+from ai_rag_info._version import __version__
 
 #: Longer than the server's own request deadline (60 s by default), so a slow request ends with the server's
 #: typed ``timeout`` error rather than a client-side transport timeout.
@@ -28,7 +28,7 @@ def _build_http_client(
     timeout: float,
     transport: httpx.AsyncBaseTransport | None,
 ) -> httpx.AsyncClient:
-    merged = {"User-Agent": f"turinton-rag-python/{__version__}", **(headers or {})}
+    merged = {"User-Agent": f"ai-rag-info-python/{__version__}", **(headers or {})}
     if api_key:
         merged["Authorization"] = f"Bearer {api_key}"
     return httpx.AsyncClient(

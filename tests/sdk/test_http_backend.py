@@ -7,10 +7,10 @@ import json
 
 import httpx
 import pytest
-from turinton_rag import AsyncRagClient
-from turinton_rag._http import error_from_response
-from turinton_rag._sse import SSEParser
-from turinton_rag.errors import (
+from ai_rag_info import AsyncRagClient
+from ai_rag_info._http import error_from_response
+from ai_rag_info._sse import SSEParser
+from ai_rag_info.errors import (
     ConnectionFailedError,
     InvalidRequestError,
     NotFoundError,
@@ -47,7 +47,7 @@ def no_sleeping(monkeypatch):
     async def fake(seconds: float) -> None:
         sleeps.append(seconds)
 
-    monkeypatch.setattr("turinton_rag._http.asyncio.sleep", fake)
+    monkeypatch.setattr("ai_rag_info._http.asyncio.sleep", fake)
     return sleeps
 
 
@@ -277,14 +277,14 @@ async def test_requests_carry_auth_headers_a_user_agent_and_the_documented_body(
         "sources": ["/x"],
     }
 
-    from turinton_rag.client import _build_http_client
+    from ai_rag_info.client import _build_http_client
 
     built = _build_http_client(
         "http://h/", "sekret", {"X-Team": "a"}, None, 5.0, httpx.MockTransport(handler)
     )
     await built.get("http://h/ping")
     assert seen[-1].headers["authorization"] == "Bearer sekret" and seen[-1].headers["x-team"] == "a"
-    assert seen[-1].headers["user-agent"].startswith("turinton-rag-python/")
+    assert seen[-1].headers["user-agent"].startswith("ai-rag-info-python/")
     assert str(seen[0].url) == "http://rag.test/api/v1/retrieve", (
         "URLs are absolute: a supplied client needs no base_url"
     )

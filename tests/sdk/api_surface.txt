@@ -1,11 +1,11 @@
-# Public API surface of turinton_rag. Regenerate: python scripts/api_surface.py --write
+# Public API surface of ai_rag_info. Regenerate: python scripts/api_surface.py --write
 
-## turinton_rag
-class turinton_rag.AsyncRag(AsyncRagAPI)
+## ai_rag_info
+class ai_rag_info.AsyncRag(AsyncRagAPI)
   def create(cls, settings: 'Settings | None' = None, config: 'RagConfig | None' = None, *, registries: 'Registries | None' = None, ingestion: 'bool' = True) -> 'AsyncRag'  [classmethod]
   async def evaluate(self, dataset: 'Dataset | str | Path', *, name: 'str' = 'run', collection: 'str | None' = None, ks: 'Sequence[int]' = (1, 3, 5, 10), granularity: 'Granularity' = 'chunk', answers: 'bool' = False, judge_model: 'str | None' = None, answer_model: 'str | None' = None, concurrency: 'int' = 4) -> 'EvalReport' [experimental]
   def from_container(cls, container: 'Container') -> 'AsyncRag'  [classmethod]
-class turinton_rag.AsyncRagAPI()
+class ai_rag_info.AsyncRagAPI()
   async def aclose(self) -> 'None'
   async def ask(self, query: 'str', *, collections: 'Sequence[str] | None' = None, kinds: 'Sequence[ContentKind] | None' = None, sources: 'Sequence[str] | None' = None, model: 'str | None' = None) -> 'AskResponse'
   async def models(self) -> 'ModelsResponse'
@@ -14,19 +14,19 @@ class turinton_rag.AsyncRagAPI()
   resource chat: AsyncChat
   resource jobs: AsyncJobs
   resource collections: AsyncCollections
-class turinton_rag.AsyncRagClient(AsyncRagAPI)
+class ai_rag_info.AsyncRagClient(AsyncRagAPI)
 EXPERIMENTAL: set
-class turinton_rag.EvalReport()
+class ai_rag_info.EvalReport()
   def __init__(self, name: 'str', meta: 'dict[str, Any]', metrics: 'dict[str, Interval]', by_tag: 'dict[str, dict[str, tuple[float, int]]]', latency_ms: 'dict[str, float]', errors: 'int', cases: 'list[dict[str, Any]]') -> None
   def from_dict(cls, raw: 'Mapping[str, Any]') -> 'EvalReport'  [classmethod]
   def load(cls, path: 'Path') -> 'EvalReport'  [classmethod]
   def save(self, path: 'Path') -> 'None'
   def to_dict(self) -> 'dict[str, Any]'
   def values(self, metric: 'str') -> 'dict[str, float]'
-class turinton_rag.Rag(RagAPI)
+class ai_rag_info.Rag(RagAPI)
   property engine
   def evaluate(self, dataset: 'Dataset | str | Path', *, name: 'str' = 'run', collection: 'str | None' = None, ks: 'Sequence[int]' = (1, 3, 5, 10), granularity: 'Granularity' = 'chunk', answers: 'bool' = False, judge_model: 'str | None' = None, answer_model: 'str | None' = None, concurrency: 'int' = 4) -> 'EvalReport' [experimental]
-class turinton_rag.RagAPI()
+class ai_rag_info.RagAPI()
   def ask(self, query: 'str', *, collections: 'Sequence[str] | None' = None, kinds: 'Sequence[ContentKind] | None' = None, sources: 'Sequence[str] | None' = None, model: 'str | None' = None) -> 'AskResponse'
   def close(self) -> 'None'
   def models(self) -> 'ModelsResponse'
@@ -35,12 +35,12 @@ class turinton_rag.RagAPI()
   resource chat: Chat
   resource jobs: Jobs
   resource collections: Collections
-class turinton_rag.RagClient(RagAPI)
-class turinton_rag.RagDeprecationWarning(DeprecationWarning)
-class turinton_rag.RagFutureWarning(FutureWarning)
+class ai_rag_info.RagClient(RagAPI)
+class ai_rag_info.RagDeprecationWarning(DeprecationWarning)
+class ai_rag_info.RagFutureWarning(FutureWarning)
 __version__: str
-def turinton_rag.deprecated(*, since: 'str', remove_in: 'str', alternative: 'str | None' = None, reason: 'str | None' = None) -> 'Callable[[F], F]'
-def turinton_rag.experimental(obj: 'T') -> 'T'
+def ai_rag_info.deprecated(*, since: 'str', remove_in: 'str', alternative: 'str | None' = None, reason: 'str | None' = None) -> 'Callable[[F], F]'
+def ai_rag_info.experimental(obj: 'T') -> 'T'
 
 ## resources (reached as rag.documents, rag.chat, rag.jobs, rag.collections)
 class AsyncDocuments()
@@ -72,44 +72,44 @@ class AsyncCollections()
 class Collections [blocking]()
   def list(self) -> 'list[CollectionInfo]'
 
-## turinton_rag.models
-class turinton_rag.models.AskRequest(_Scoped)
+## ai_rag_info.models
+class ai_rag_info.models.AskRequest(_Scoped)
   field collections: list[str] | None [default=None]
   field kinds: list[typing.Literal['text', 'table', 'image']] | None [default=None]
   field sources: list[str] | None [default=None]
   field query: <class 'str'> [required]
   field model: str | None [default=None]
-class turinton_rag.models.AskResponse(BaseModel)
+class ai_rag_info.models.AskResponse(BaseModel)
   field query: <class 'str'> [required]
   field expanded_queries: list[str] [required]
   field answer: <class 'str'> [required]
   field model: <class 'str'> [required]
   field context: list[src.contracts.models.ContextChunk] [required]
-class turinton_rag.models.ChatDeltaEvent(BaseModel)
+class ai_rag_info.models.ChatDeltaEvent(BaseModel)
   field text: <class 'str'> [required]
-class turinton_rag.models.ChatEndEvent(BaseModel)
+class ai_rag_info.models.ChatEndEvent(BaseModel)
   field answer: <class 'str'> [required]
-class turinton_rag.models.ChatRequest(_Scoped)
+class ai_rag_info.models.ChatRequest(_Scoped)
   field collections: list[str] | None [default=None]
   field kinds: list[typing.Literal['text', 'table', 'image']] | None [default=None]
   field sources: list[str] | None [default=None]
   field message: <class 'str'> [required]
   field conversation_id: str | None [default=None]
   field model: str | None [default=None]
-class turinton_rag.models.ChatResponse(BaseModel)
+class ai_rag_info.models.ChatResponse(BaseModel)
   field conversation_id: <class 'str'> [required]
   field answer: <class 'str'> [required]
   field standalone_query: <class 'str'> [required]
   field model: <class 'str'> [required]
   field context: list[src.contracts.models.ContextChunk] [required]
-class turinton_rag.models.ChatStartEvent(BaseModel)
+class ai_rag_info.models.ChatStartEvent(BaseModel)
   field conversation_id: <class 'str'> [required]
   field standalone_query: <class 'str'> [required]
   field expanded_queries: list[str] [required]
   field model: <class 'str'> [required]
   field context: list[src.contracts.models.ContextChunk] [required]
-turinton_rag.models.ChatStreamEvent: UnionType
-class turinton_rag.models.CollectionInfo(BaseModel)
+ai_rag_info.models.ChatStreamEvent: UnionType
+class ai_rag_info.models.CollectionInfo(BaseModel)
   field name: <class 'str'> [required]
   field description: <class 'str'> [required]
   field embedding_model: <class 'str'> [required]
@@ -117,8 +117,8 @@ class turinton_rag.models.CollectionInfo(BaseModel)
   field parsers: list[str] | None [required]
   field indices: dict[str, str] [required]
   field default: <class 'bool'> [required]
-def turinton_rag.models.ContentKind(*args, **kwargs)
-class turinton_rag.models.ContextChunk(RetrievedChunk)
+def ai_rag_info.models.ContentKind(*args, **kwargs)
+class ai_rag_info.models.ContextChunk(RetrievedChunk)
   field content: <class 'str'> [required]
   field score: <class 'float'> [required]
   field source: str | None [default=None]
@@ -128,18 +128,18 @@ class turinton_rag.models.ContextChunk(RetrievedChunk)
   field collection: str | None [default=None]
   field kind: typing.Optional[typing.Literal['text', 'table', 'image']] [default=None]
   field rank: <class 'int'> [required]
-class turinton_rag.models.ConversationMessage(BaseModel)
+class ai_rag_info.models.ConversationMessage(BaseModel)
   field role: typing.Literal['system', 'user', 'assistant'] [required]
   field content: <class 'str'> [required]
-class turinton_rag.models.ConversationResponse(BaseModel)
+class ai_rag_info.models.ConversationResponse(BaseModel)
   field conversation_id: <class 'str'> [required]
   field messages: list[src.contracts.models.ConversationMessage] [required]
-class turinton_rag.models.DeleteResponse(BaseModel)
+class ai_rag_info.models.DeleteResponse(BaseModel)
   field success: <class 'bool'> [required]
   field source: <class 'str'> [required]
   field collection: <class 'str'> [required]
   field deleted_count: <class 'int'> [required]
-class turinton_rag.models.DocumentInfo(BaseModel)
+class ai_rag_info.models.DocumentInfo(BaseModel)
   field source: <class 'str'> [required]
   field collection: <class 'str'> [required]
   field document_id: <class 'str'> [required]
@@ -151,17 +151,17 @@ class turinton_rag.models.DocumentInfo(BaseModel)
   field image_chunks: <class 'int'> [required]
   field total_pages: <class 'int'> [required]
   field completed_at: <class 'int'> [required]
-class turinton_rag.models.DocumentList(BaseModel)
+class ai_rag_info.models.DocumentList(BaseModel)
   field collection: <class 'str'> [required]
   field total: <class 'int'> [required]
   field limit: <class 'int'> [required]
   field offset: <class 'int'> [required]
   field documents: list[src.contracts.models.DocumentInfo] [required]
   resource documents: list[DocumentInfo]
-class turinton_rag.models.ErrorBody(BaseModel)
+class ai_rag_info.models.ErrorBody(BaseModel)
   field detail: <class 'str'> [required]
   field code: <class 'str'> [required]
-class turinton_rag.models.IngestResponse(BaseModel)
+class ai_rag_info.models.IngestResponse(BaseModel)
   field source: <class 'str'> [required]
   field collection: <class 'str'> [required]
   field text_chunks: <class 'int'> [required]
@@ -175,7 +175,7 @@ class turinton_rag.models.IngestResponse(BaseModel)
   field document_id: str | None [default=None]
   field total_pages: int | None [default=None]
   field warnings: list[str] [default=PydanticUndefined]
-class turinton_rag.models.JobResponse(BaseModel)
+class ai_rag_info.models.JobResponse(BaseModel)
   field job_id: <class 'str'> [required]
   field status: typing.Literal['queued', 'running', 'succeeded', 'failed'] [required]
   field collection: <class 'str'> [required]
@@ -187,27 +187,27 @@ class turinton_rag.models.JobResponse(BaseModel)
   field created_at: <class 'float'> [required]
   field started_at: float | None [default=None]
   field finished_at: float | None [default=None]
-class turinton_rag.models.ModelInfo(BaseModel)
+class ai_rag_info.models.ModelInfo(BaseModel)
   field name: <class 'str'> [required]
   field provider: <class 'str'> [required]
   field model: <class 'str'> [required]
   field default: <class 'bool'> [default=False]
   field dimensions: int | None [default=None]
-class turinton_rag.models.ModelsResponse(BaseModel)
+class ai_rag_info.models.ModelsResponse(BaseModel)
   field chat: list[src.contracts.models.ModelInfo] [required]
   field embedding: list[src.contracts.models.ModelInfo] [required]
   resource chat: list[ModelInfo]
-class turinton_rag.models.RetrieveRequest(_Scoped)
+class ai_rag_info.models.RetrieveRequest(_Scoped)
   field collections: list[str] | None [default=None]
   field kinds: list[typing.Literal['text', 'table', 'image']] | None [default=None]
   field sources: list[str] | None [default=None]
   field query: <class 'str'> [required]
-class turinton_rag.models.RetrieveResponse(BaseModel)
+class ai_rag_info.models.RetrieveResponse(BaseModel)
   field query: <class 'str'> [required]
   field expanded_queries: list[str] [required]
   field documents: list[src.contracts.models.RetrievedChunk] [required]
   resource documents: list[RetrievedChunk]
-class turinton_rag.models.RetrievedChunk(BaseModel)
+class ai_rag_info.models.RetrievedChunk(BaseModel)
   field content: <class 'str'> [required]
   field score: <class 'float'> [required]
   field source: str | None [default=None]
@@ -216,73 +216,73 @@ class turinton_rag.models.RetrievedChunk(BaseModel)
   field keywords: list[str] | None [default=None]
   field collection: str | None [default=None]
   field kind: typing.Optional[typing.Literal['text', 'table', 'image']] [default=None]
-turinton_rag.models.STREAM_EVENT_NAMES: dict
+ai_rag_info.models.STREAM_EVENT_NAMES: dict
 
-## turinton_rag.errors
-class turinton_rag.errors.ClientError(RagError)
+## ai_rag_info.errors
+class ai_rag_info.errors.ClientError(RagError)
   code = 'client_error'
   status_code = 0
-class turinton_rag.errors.ConfigError(RagError)
+class ai_rag_info.errors.ConfigError(RagError)
   code = 'config_error'
-class turinton_rag.errors.ConnectionFailedError(ClientError)
+class ai_rag_info.errors.ConnectionFailedError(ClientError)
   code = 'connection_failed'
-class turinton_rag.errors.IndexingError(UpstreamError)
+class ai_rag_info.errors.IndexingError(UpstreamError)
   code = 'indexing_error'
-class turinton_rag.errors.InvalidRequestError(RagError)
+class ai_rag_info.errors.InvalidRequestError(RagError)
   code = 'invalid_request'
   status_code = 400
-class turinton_rag.errors.JobFailedError(RagError)
+class ai_rag_info.errors.JobFailedError(RagError)
   code = 'job_failed'
-class turinton_rag.errors.ModelError(UpstreamError)
+class ai_rag_info.errors.ModelError(UpstreamError)
   code = 'model_error'
-class turinton_rag.errors.NotFoundError(RagError)
+class ai_rag_info.errors.NotFoundError(RagError)
   code = 'not_found'
   status_code = 404
-class turinton_rag.errors.OverloadedError(RagError)
+class ai_rag_info.errors.OverloadedError(RagError)
   code = 'overloaded'
   status_code = 503
   def __init__(self, message: 'str', retry_after: 'int' = 1) -> 'None'
-class turinton_rag.errors.ParseError(RagError)
+class ai_rag_info.errors.ParseError(RagError)
   code = 'parse_error'
   status_code = 422
-class turinton_rag.errors.PayloadTooLargeError(InvalidRequestError)
+class ai_rag_info.errors.PayloadTooLargeError(InvalidRequestError)
   code = 'payload_too_large'
   status_code = 413
-class turinton_rag.errors.ProviderUnavailableError(ConfigError)
+class ai_rag_info.errors.ProviderUnavailableError(ConfigError)
   code = 'provider_unavailable'
-class turinton_rag.errors.QueueFullError(OverloadedError)
+class ai_rag_info.errors.QueueFullError(OverloadedError)
   code = 'queue_full'
-class turinton_rag.errors.RagError(Exception)
+class ai_rag_info.errors.RagError(Exception)
   code = 'internal_error'
   status_code = 500
   property public_message
-class turinton_rag.errors.RateLimitedError(RagError)
+class ai_rag_info.errors.RateLimitedError(RagError)
   code = 'rate_limited'
   status_code = 429
   def __init__(self, message: 'str', retry_after: 'int' = 1) -> 'None'
-class turinton_rag.errors.RequestTimeoutError(RagError)
+class ai_rag_info.errors.RequestTimeoutError(RagError)
   code = 'timeout'
   status_code = 504
-class turinton_rag.errors.ResponseError(ClientError)
+class ai_rag_info.errors.ResponseError(ClientError)
   code = 'invalid_response'
-class turinton_rag.errors.SearchError(UpstreamError)
+class ai_rag_info.errors.SearchError(UpstreamError)
   code = 'search_error'
-class turinton_rag.errors.UnknownComponentError(ConfigError)
+class ai_rag_info.errors.UnknownComponentError(ConfigError)
   code = 'unknown_component'
-class turinton_rag.errors.UnsupportedTypeError(InvalidRequestError)
+class ai_rag_info.errors.UnsupportedTypeError(InvalidRequestError)
   code = 'unsupported_type'
   status_code = 415
-class turinton_rag.errors.UpstreamError(RagError)
+class ai_rag_info.errors.UpstreamError(RagError)
   code = 'upstream_error'
   status_code = 502
   property public_message
-class turinton_rag.errors.UsageError(ClientError)
+class ai_rag_info.errors.UsageError(ClientError)
   code = 'usage_error'
-def turinton_rag.errors.error_catalog() -> 'dict[str, type[RagError]]'
-def turinton_rag.errors.error_from_code(code: 'str', message: 'str', *, status: 'int | None' = None, retry_after: 'int | None' = None, request_id: 'str | None' = None, details: 'Mapping[str, Any] | None' = None) -> 'RagError'
+def ai_rag_info.errors.error_catalog() -> 'dict[str, type[RagError]]'
+def ai_rag_info.errors.error_from_code(code: 'str', message: 'str', *, status: 'int | None' = None, retry_after: 'int | None' = None, request_id: 'str | None' = None, details: 'Mapping[str, Any] | None' = None) -> 'RagError'
 
-## turinton_rag.extend
-class turinton_rag.extend.Cache(Protocol)
+## ai_rag_info.extend
+class ai_rag_info.extend.Cache(Protocol)
   def __init__(self, *args, **kwargs)
   async def close(self) -> 'None'
   async def counter(self, key: 'str') -> 'int'
@@ -291,31 +291,31 @@ class turinton_rag.extend.Cache(Protocol)
   async def incr(self, key: 'str') -> 'int'
   async def ping(self) -> 'None'
   async def set(self, key: 'str', value: 'bytes', ttl: 'int') -> 'None'
-class turinton_rag.extend.ChatMessage()
+class ai_rag_info.extend.ChatMessage()
   def __init__(self, role: 'Role', content: 'str') -> None
-class turinton_rag.extend.ChatModel(Protocol)
+class ai_rag_info.extend.ChatModel(Protocol)
   def __init__(self, *args, **kwargs)
   async def complete(self, messages: 'Sequence[ChatMessage]') -> 'str'
   def stream(self, messages: 'Sequence[ChatMessage]') -> 'AsyncIterator[str]'
-class turinton_rag.extend.ChunkDraft()
+class ai_rag_info.extend.ChunkDraft()
   def __init__(self, content: 'str', index: 'int', total: 'int') -> None
-class turinton_rag.extend.Chunker(Protocol)
+class ai_rag_info.extend.Chunker(Protocol)
   def __init__(self, *args, **kwargs)
   def split(self, text: 'str') -> 'list[ChunkDraft]'
-class turinton_rag.extend.ConversationStore(Protocol)
+class ai_rag_info.extend.ConversationStore(Protocol)
   def __init__(self, *args, **kwargs)
   async def append(self, conversation_id: 'str', messages: 'Sequence[ChatMessage]') -> 'None'
   async def close(self) -> 'None'
   async def delete(self, conversation_id: 'str') -> 'bool'
   async def load(self, conversation_id: 'str', limit: 'int') -> 'list[ChatMessage]'
   async def ping(self) -> 'None'
-class turinton_rag.extend.Embedder(Protocol)
+class ai_rag_info.extend.Embedder(Protocol)
   def __init__(self, *args, **kwargs)
   async def embed_documents(self, texts: 'Sequence[str]') -> 'list[list[float]]'
   async def embed_queries(self, texts: 'Sequence[str]') -> 'list[list[float]]'
-class turinton_rag.extend.ImageRef()
+class ai_rag_info.extend.ImageRef()
   def __init__(self, label: 'str', data: 'bytes') -> None
-class turinton_rag.extend.JobBackend(Protocol)
+class ai_rag_info.extend.JobBackend(Protocol)
   def __init__(self, *args, **kwargs)
   async def close(self) -> 'None'
   async def depth(self) -> 'int'
@@ -326,53 +326,53 @@ class turinton_rag.extend.JobBackend(Protocol)
   async def start(self) -> 'None'
   async def submit(self, spec: 'JobSpec') -> 'JobRecord'
   async def wait(self, job_id: 'str', wait_seconds: 'float') -> 'JobRecord'
-class turinton_rag.extend.OcrEngine(Protocol)
+class ai_rag_info.extend.OcrEngine(Protocol)
   def __init__(self, *args, **kwargs)
   def close(self) -> 'None'
   def read(self, image: 'bytes', language_hint: 'str | None') -> 'OcrResult'
-class turinton_rag.extend.OcrResult()
+class ai_rag_info.extend.OcrResult()
   def __init__(self, text: 'str', language: 'str', confidence: 'float') -> None
-class turinton_rag.extend.ParsedUnit()
+class ai_rag_info.extend.ParsedUnit()
   def __init__(self, unit: 'int', texts: 'list[TextBlock]' = <factory>, tables: 'list[TableBlock]' = <factory>, images: 'list[ImageRef]' = <factory>) -> None
-class turinton_rag.extend.Parser(Protocol)
+class ai_rag_info.extend.Parser(Protocol)
   def __init__(self, *args, **kwargs)
   def iter_units(self, path: 'Path') -> 'Iterator[ParsedUnit]'
-def turinton_rag.extend.PluginRegister(*args, **kwargs)
-class turinton_rag.extend.QueryExpander(Protocol)
+def ai_rag_info.extend.PluginRegister(*args, **kwargs)
+class ai_rag_info.extend.QueryExpander(Protocol)
   def __init__(self, *args, **kwargs)
   async def expand(self, query: 'str') -> 'list[str]'
-class turinton_rag.extend.RateLimiter(Protocol)
+class ai_rag_info.extend.RateLimiter(Protocol)
   def __init__(self, *args, **kwargs)
   async def close(self) -> 'None'
   async def hit(self, key: 'str', limit: 'int', window_seconds: 'int') -> 'RateDecision'
   async def ping(self) -> 'None'
-class turinton_rag.extend.Registries()
+class ai_rag_info.extend.Registries()
   def __init__(self, parsers: 'Registry[Parser]' = <factory>, ocr_engines: 'Registry[OcrEngine]' = <factory>, chunkers: 'Registry[Chunker]' = <factory>, chat_providers: 'Registry[ChatModel]' = <factory>, embedding_providers: 'Registry[Embedder]' = <factory>, query_expanders: 'Registry[QueryExpander]' = <factory>, rerankers: 'Registry[Reranker]' = <factory>, caches: 'Registry[Cache]' = <factory>, rate_limiters: 'Registry[RateLimiter]' = <factory>, conversation_stores: 'Registry[ConversationStore]' = <factory>, job_backends: 'Registry[JobBackend]' = <factory>) -> None
-class turinton_rag.extend.Registry(Generic)
+class ai_rag_info.extend.Registry(Generic)
   def __init__(self, kind: 'str') -> 'None'
   def create(self, name: 'str', /, *args: 'Any', **kwargs: 'Any') -> 'T'
   def names(self) -> 'list[str]'
   def register(self, name: 'str', factory: 'Callable[..., T]', *, replace: 'bool' = False) -> 'None'
-class turinton_rag.extend.Reranker(Protocol)
+class ai_rag_info.extend.Reranker(Protocol)
   def __init__(self, *args, **kwargs)
   async def close(self) -> 'None'
   async def rerank(self, documents: 'Sequence[RetrievedDocument]', query: 'str') -> 'list[RetrievedDocument]'
   async def start(self) -> 'None'
-class turinton_rag.extend.RetrievedDocument()
+class ai_rag_info.extend.RetrievedDocument()
   def __init__(self, content: 'str', metadata: 'dict[str, Any]', score: 'float', collection: 'str', kind: 'ContentKind', index: 'str', rerank_score: 'float | None' = None) -> None
   property final_score
-class turinton_rag.extend.TableBlock()
+class ai_rag_info.extend.TableBlock()
   def __init__(self, markdown: 'str', summary: 'str', columns: 'tuple[str, ...]', row_count: 'int', language: 'str | None' = None) -> None
-class turinton_rag.extend.TextBlock()
+class ai_rag_info.extend.TextBlock()
   def __init__(self, text: 'str', language: 'str | None' = None) -> None
 
-## turinton_rag.testing
-class turinton_rag.testing.ConformanceError(AssertionError)
-async def turinton_rag.testing.check_cache(cache: 'Cache') -> 'None' [experimental]
-async def turinton_rag.testing.check_chat_model(chat: 'ChatModel') -> 'None' [experimental]
-def turinton_rag.testing.check_chunker(chunker: 'Chunker', text: 'str' = 'Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. ') -> 'None' [experimental]
-async def turinton_rag.testing.check_conversation_store(store: 'ConversationStore') -> 'None' [experimental]
-async def turinton_rag.testing.check_embedder(embedder: 'Embedder', samples: 'Sequence[str]' = ('alpha beta', 'gamma delta', 'alpha beta')) -> 'None' [experimental]
-def turinton_rag.testing.check_parser(parser: 'Parser', sample: 'Path') -> 'None' [experimental]
-async def turinton_rag.testing.check_query_expander(expander: 'QueryExpander', query: 'str' = 'quarterly revenue growth') -> 'None' [experimental]
-async def turinton_rag.testing.check_reranker(reranker: 'Reranker', query: 'str' = 'quarterly revenue growth', passages: 'Sequence[str]' = ('Quarterly revenue grew twelve percent across all regions.', 'The office plants need watering every week.', 'Revenue was discussed at the board meeting.')) -> 'None' [experimental]
+## ai_rag_info.testing
+class ai_rag_info.testing.ConformanceError(AssertionError)
+async def ai_rag_info.testing.check_cache(cache: 'Cache') -> 'None' [experimental]
+async def ai_rag_info.testing.check_chat_model(chat: 'ChatModel') -> 'None' [experimental]
+def ai_rag_info.testing.check_chunker(chunker: 'Chunker', text: 'str' = 'Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. Revenue grew twelve percent. ') -> 'None' [experimental]
+async def ai_rag_info.testing.check_conversation_store(store: 'ConversationStore') -> 'None' [experimental]
+async def ai_rag_info.testing.check_embedder(embedder: 'Embedder', samples: 'Sequence[str]' = ('alpha beta', 'gamma delta', 'alpha beta')) -> 'None' [experimental]
+def ai_rag_info.testing.check_parser(parser: 'Parser', sample: 'Path') -> 'None' [experimental]
+async def ai_rag_info.testing.check_query_expander(expander: 'QueryExpander', query: 'str' = 'quarterly revenue growth') -> 'None' [experimental]
+async def ai_rag_info.testing.check_reranker(reranker: 'Reranker', query: 'str' = 'quarterly revenue growth', passages: 'Sequence[str]' = ('Quarterly revenue grew twelve percent across all regions.', 'The office plants need watering every week.', 'Revenue was discussed at the board meeting.')) -> 'None' [experimental]

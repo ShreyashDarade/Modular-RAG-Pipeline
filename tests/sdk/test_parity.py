@@ -7,8 +7,8 @@ import io
 from pathlib import Path
 
 import pytest
-from turinton_rag import AsyncRag, AsyncRagAPI, AsyncRagClient
-from turinton_rag.errors import (
+from ai_rag_info import AsyncRag, AsyncRagAPI, AsyncRagClient
+from ai_rag_info.errors import (
     InvalidRequestError,
     NotFoundError,
     ParseError,

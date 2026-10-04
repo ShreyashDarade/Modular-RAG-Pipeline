@@ -1,7 +1,7 @@
 """The in-process SDK: run the whole pipeline inside your application.
 
-Needs the engine: ``pip install 'turinton-rag[engine]'`` (plus ``worker`` to ingest files, ``local`` for
-self-hosted models, ...). The interface is the one :class:`~turinton_rag.AsyncRagClient` exposes over HTTP -
+Needs the engine: ``pip install 'ai-rag-info[engine]'`` (plus ``worker`` to ingest files, ``local`` for
+self-hosted models, ...). The interface is the one :class:`~ai_rag_info.AsyncRagClient` exposes over HTTP -
 it is the same facade over :class:`~src.application.RagService` - plus :meth:`AsyncRag.evaluate`, which only
 makes sense where the engine is.
 """
@@ -18,8 +18,8 @@ from typing import TYPE_CHECKING
 _ENGINE = ("elasticsearch", "pydantic_settings", "redis", "langchain_core", "prometheus_client")
 if missing := [m for m in _ENGINE if importlib.util.find_spec(m) is None]:
     raise ImportError(
-        f"turinton_rag.embedded needs the engine ({', '.join(missing)} not installed): "
-        "pip install 'turinton-rag[engine]'"
+        f"ai_rag_info.embedded needs the engine ({', '.join(missing)} not installed): "
+        "pip install 'ai-rag-info[engine]'"
     )
 
 from src.application import RagService
@@ -47,10 +47,10 @@ from src.core.logger import logger
 from src.core.registry import Registries
 from src.core.specs import RagConfig
 
-from turinton_rag._backend import IngestOptions, Upload
-from turinton_rag._compat import experimental, internal_init
-from turinton_rag._facade import AsyncRagAPI
-from turinton_rag._sync import RagAPI, bridge_for
+from ai_rag_info._backend import IngestOptions, Upload
+from ai_rag_info._compat import experimental, internal_init
+from ai_rag_info._facade import AsyncRagAPI
+from ai_rag_info._sync import RagAPI, bridge_for
 
 if TYPE_CHECKING:
     from src.evaluation.dataset import Dataset

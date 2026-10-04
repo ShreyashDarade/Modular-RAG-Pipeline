@@ -45,8 +45,8 @@ from src.core.errors import (
     error_from_code,
 )
 
-from turinton_rag._backend import IngestOptions, Upload
-from turinton_rag._sse import SSEEvent, SSEParser
+from ai_rag_info._backend import IngestOptions, Upload
+from ai_rag_info._sse import SSEEvent, SSEParser
 
 M = TypeVar("M", bound=BaseModel)
 
