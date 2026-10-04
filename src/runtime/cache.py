@@ -18,6 +18,7 @@ from src.core.registry import Registries
 from src.ports.runtime import Cache
 from src.runtime.concurrency import SingleFlight
 from src.runtime.metrics import CACHE_REQUESTS
+from src.runtime.redis_client import DEFAULT_SOCKET_TIMEOUT, new_client
 
 if TYPE_CHECKING:
     from src.core.config import Settings
@@ -68,10 +69,10 @@ class MemoryCache:
 class RedisCache:
     """Shared across replicas. One connection pool per process."""
 
-    def __init__(self, url: str, *, namespace: str = "rag") -> None:
-        self._client: aioredis.Redis = aioredis.from_url(
-            url, decode_responses=False, health_check_interval=30
-        )
+    def __init__(
+        self, url: str, *, namespace: str = "rag", socket_timeout: float = DEFAULT_SOCKET_TIMEOUT
+    ) -> None:
+        self._client: aioredis.Redis = new_client(url, decode_responses=False, socket_timeout=socket_timeout)
         self._ns = namespace
 
     def _k(self, key: str) -> str:
@@ -162,37 +163,72 @@ def build_memory_cache(settings: Settings) -> Cache:
 
 
 def build_redis_cache(settings: Settings) -> Cache:
-    return RedisCache(settings.redis_url, namespace=settings.redis_namespace)
+    return RedisCache(
+        settings.redis_url,
+        namespace=settings.redis_namespace,
+        socket_timeout=settings.redis_socket_timeout_seconds,
+    )
 
 
 def build_tiered_cache(settings: Settings) -> Cache:
     return TieredCache(
         MemoryCache(settings.cache_memory_entries),
-        RedisCache(settings.redis_url, namespace=settings.redis_namespace),
+        RedisCache(
+            settings.redis_url,
+            namespace=settings.redis_namespace,
+            socket_timeout=settings.redis_socket_timeout_seconds,
+        ),
     )
 
 
 class CorpusVersion:
     """Monotonic counter folded into corpus-dependent cache keys. Bumping it (after an ingest or a
     delete) retires every cached retrieval result on every replica at once. Reads are memoised
-    for ``refresh_seconds`` so the hot path costs no extra round trip."""
+    for ``refresh_seconds`` so the hot path costs no extra round trip.
+
+    With ``settle_seconds`` > 0 the corpus is *settling* for that long after a bump: the new data
+    was written but Elasticsearch has not refreshed yet, so a search now would miss it. Callers
+    must not cache results computed in that window - they would be served under the new version
+    for the whole cache TTL. The deadline is stored as a wall-clock timestamp, so it holds on every
+    replica regardless of local cache tiers."""
 
     KEY = "corpus-version"
+    SETTLING_KEY = "corpus-settling-until"
 
-    def __init__(self, cache: Cache, refresh_seconds: float = 1.0) -> None:
+    def __init__(self, cache: Cache, refresh_seconds: float = 1.0, settle_seconds: float = 0.0) -> None:
         self._cache = cache
         self._refresh = refresh_seconds
+        self._settle = settle_seconds
         self._value = 0
+        self._settling_until = 0.0
         self._read_at = float("-inf")
 
-    async def current(self) -> int:
+    async def _load(self) -> None:
         now = time.monotonic()
-        if now - self._read_at >= self._refresh:
-            self._value = await self._cache.counter(self.KEY)
-            self._read_at = now
+        if now - self._read_at < self._refresh:
+            return
+        self._value = await self._cache.counter(self.KEY)
+        if self._settle > 0:
+            raw = await self._cache.get(self.SETTLING_KEY)
+            self._settling_until = float(raw) if raw else 0.0
+        self._read_at = now
+
+    async def current(self) -> int:
+        await self._load()
         return self._value
 
+    async def state(self) -> tuple[int, bool]:
+        """``(version, settling)`` from one memoised read."""
+        await self._load()
+        return self._value, time.time() < self._settling_until
+
     async def bump(self) -> int:
+        if self._settle > 0:
+            # marker first: a replica that sees the new version must also see that it is unsettled
+            self._settling_until = time.time() + self._settle
+            await self._cache.set(
+                self.SETTLING_KEY, repr(self._settling_until).encode(), int(self._settle) + 2
+            )
         self._value = await self._cache.incr(self.KEY)
         self._read_at = time.monotonic()
         return self._value

@@ -30,7 +30,10 @@ class InProcessJobBackend:
 
     def __init__(self, settings: Settings) -> None:
         self._max_attempts = settings.ingest_max_attempts
-        self._queue: asyncio.Queue[str] = asyncio.Queue(maxsize=settings.ingest_queue_max_size)
+        self._max_size = settings.ingest_queue_max_size
+        # Unbounded on purpose: capacity is enforced in submit(); a retry of a job that was already
+        # admitted must never be refused (that would strand it in `running` forever).
+        self._queue: asyncio.Queue[str] = asyncio.Queue()
         self._jobs: OrderedDict[str, JobRecord] = OrderedDict()
         self._done: dict[str, asyncio.Event] = {}
         self._running = 0
@@ -44,12 +47,9 @@ class InProcessJobBackend:
 
     async def submit(self, spec: JobSpec) -> JobRecord:
         record = JobRecord(id=uuid.uuid4().hex, spec=spec)
-        try:
-            self._queue.put_nowait(record.id)
-        except asyncio.QueueFull:
-            raise QueueFullError(
-                f"ingestion queue is full ({self._queue.maxsize} jobs waiting)", retry_after=5
-            ) from None
+        if self._queue.qsize() >= self._max_size:
+            raise QueueFullError(f"ingestion queue is full ({self._max_size} jobs waiting)", retry_after=5)
+        self._queue.put_nowait(record.id)
         self._jobs[record.id] = record
         self._done[record.id] = asyncio.Event()
         while len(self._jobs) > RETAINED_JOBS:  # forget the oldest *finished* jobs
@@ -100,7 +100,10 @@ class InProcessJobBackend:
                     job_id = await asyncio.wait_for(self._queue.get(), 0.5)
                 except TimeoutError:
                     continue
-                await self._process(job_id, handler)
+                try:
+                    await self._process(job_id, handler)
+                except Exception as exc:  # a bookkeeping bug: log it and keep the worker alive
+                    logger.error("job %s: unexpected worker error", job_id, exc_info=exc)
 
         async with asyncio.TaskGroup() as group:
             for _ in range(concurrency):

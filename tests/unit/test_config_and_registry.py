@@ -180,3 +180,28 @@ def test_registries_are_independent_instances():
     a, b = Registries(), Registries()
     a.parsers.register("x", lambda s: s)
     assert "x" not in b.parsers, "no global state: each container gets its own registries"
+
+
+def test_refresh_interval_must_be_an_elasticsearch_time_value():
+    with pytest.raises(ValueError, match="ES_REFRESH_INTERVAL"):
+        Settings(_env_file=None, es_refresh_interval="soon")
+    assert Settings(_env_file=None, es_refresh_interval="500ms").es_refresh_interval == "500ms"
+
+
+def test_search_settle_window_follows_the_refresh_mode():
+    assert (
+        Settings(_env_file=None, ingest_refresh="each", es_refresh_interval="5s").search_settle_seconds == 0.0
+    )
+    assert (
+        Settings(_env_file=None, ingest_refresh="interval", es_refresh_interval="5s").search_settle_seconds
+        == 6.0
+    )
+    assert (
+        Settings(_env_file=None, ingest_refresh="interval", es_refresh_interval="1m").search_settle_seconds
+        == 61.0
+    )
+
+
+def test_interval_mode_refuses_a_disabled_refresh():
+    with pytest.raises(ValueError, match="never refreshes"):
+        Settings(_env_file=None, ingest_refresh="interval", es_refresh_interval="-1")

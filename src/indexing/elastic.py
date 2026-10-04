@@ -106,10 +106,10 @@ class ElasticIndexWriter:
                     raise ConfigError(f"index '{spec.name}' does not exist and ES_AUTO_CREATE_INDICES is off")
                 body = index_body(
                     spec.dims,
-                    shards=s.es_number_of_shards,
-                    replicas=s.es_number_of_replicas,
+                    shards=spec.shards if spec.shards is not None else s.es_number_of_shards,
+                    replicas=spec.replicas if spec.replicas is not None else s.es_number_of_replicas,
                     refresh_interval=s.es_refresh_interval,
-                    vector_index_type=s.es_vector_index_type,
+                    vector_index_type=spec.vector_index_type or s.es_vector_index_type,
                 )
                 try:
                     await client.indices.create(
@@ -163,12 +163,18 @@ class ElasticIndexWriter:
             )
         logger.info("indexed %d documents into %s", len(docs), index)
 
-    async def _delete(self, indices: Sequence[str], query: dict[str, Any], operation: str) -> int:
+    async def _delete(
+        self, indices: Sequence[str], query: dict[str, Any], operation: str, *, refresh: bool
+    ) -> int:
         if not indices:
             return 0
         async with self._conn.request(operation, IndexingError):
             response = await self._conn.client.delete_by_query(
-                index=list(indices), query=query, conflicts="proceed", refresh=True, wait_for_completion=True
+                index=list(indices),
+                query=query,
+                conflicts="proceed",
+                refresh=refresh,
+                wait_for_completion=True,
             )
         if response.get("failures"):
             raise IndexingError(f"{operation} had failures: {response['failures'][:3]}")
@@ -183,10 +189,12 @@ class ElasticIndexWriter:
                 "must_not": [{"term": {"document_id": keep_document_id}}],
             }
         }
-        return await self._delete(indices, query, "delete_stale")
+        # no refresh here: the ingestion commit refreshes once, after this sweep (or leaves it to the interval)
+        return await self._delete(indices, query, "delete_stale", refresh=False)
 
     async def delete_source(self, indices: Sequence[str], source: str) -> int:
-        return await self._delete(indices, {"term": {"source": source}}, "delete_source")
+        # a user-facing delete must be visible to the very next search
+        return await self._delete(indices, {"term": {"source": source}}, "delete_source", refresh=True)
 
     async def refresh(self, indices: Sequence[str]) -> None:
         async with self._conn.request("refresh"):
@@ -318,20 +326,20 @@ class ElasticDocumentRegistry:
                 index=self._index,
                 id=self._id(record.collection, record.source),
                 document=asdict(record),
-                refresh="wait_for",
-            )
+            )  # no refresh: GET (used by the skip check) is real-time, and list() refreshes before it searches
 
     async def delete(self, collection: str, source: str) -> None:
         async with self._conn.request("registry_delete"):
             try:
-                await self._conn.client.delete(
-                    index=self._index, id=self._id(collection, source), refresh="wait_for"
-                )
+                await self._conn.client.delete(index=self._index, id=self._id(collection, source))
             except NotFoundError:
                 return
 
     async def list(self, collection: str, *, limit: int, offset: int) -> tuple[list[DocumentRecord], int]:
         async with self._conn.request("registry_list"):
+            # a tiny index, listed rarely: a refresh makes the ledger exactly current without making
+            # every ingested document wait for the refresh interval
+            await self._conn.client.indices.refresh(index=self._index)
             response = await self._conn.client.search(
                 index=self._index,
                 query={"term": {"collection": collection}},

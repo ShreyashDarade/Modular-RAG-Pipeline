@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
+from contextlib import asynccontextmanager
 from typing import Any
+
+from src.core.errors import RequestTimeoutError
 
 
 class Bulkhead:
@@ -65,3 +68,13 @@ async def run_all[T](coroutines: Iterable[Awaitable[T]]) -> list[T]:
 
 async def _await[T](awaitable: Awaitable[T]) -> T:
     return await awaitable
+
+
+@asynccontextmanager
+async def deadline(seconds: float) -> AsyncIterator[None]:
+    """Bound the enclosed work to ``seconds``; beyond that it is a ``RequestTimeoutError`` (HTTP 504)."""
+    try:
+        async with asyncio.timeout(seconds):
+            yield
+    except TimeoutError:
+        raise RequestTimeoutError(f"request did not finish within {seconds:g}s") from None

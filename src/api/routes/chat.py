@@ -50,9 +50,10 @@ async def chat_stream(payload: ChatRequest, container: ContainerDep):
 
     async def stream() -> AsyncIterator[bytes]:
         try:
-            yield _encode(first)
-            async for event in events:
-                yield _encode(event)
+            async with deadline(container):  # the whole answer, not only the first event
+                yield _encode(first)
+                async for event in events:
+                    yield _encode(event)
         except RagError as exc:
             yield _sse("error", {"detail": exc.public_message, "code": exc.code})
 

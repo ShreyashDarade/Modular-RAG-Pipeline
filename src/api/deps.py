@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
@@ -8,7 +7,8 @@ from typing import Annotated
 from fastapi import Depends, Request, Response
 
 from src.core.container import Container
-from src.core.errors import RateLimitedError, RequestTimeoutError
+from src.core.errors import RateLimitedError
+from src.runtime.concurrency import deadline as request_deadline
 from src.runtime.metrics import RATE_LIMITED
 
 
@@ -41,9 +41,5 @@ RateLimited = Depends(rate_limit)
 @asynccontextmanager
 async def deadline(container: Container) -> AsyncIterator[None]:
     """Bound a request's total time to ``REQUEST_TIMEOUT_SECONDS`` (504 beyond that)."""
-    seconds = container.settings.request_timeout_seconds
-    try:
-        async with asyncio.timeout(seconds):
-            yield
-    except TimeoutError:
-        raise RequestTimeoutError(f"request did not finish within {seconds}s") from None
+    async with request_deadline(container.settings.request_timeout_seconds):
+        yield

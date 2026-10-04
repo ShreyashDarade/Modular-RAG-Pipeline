@@ -31,7 +31,9 @@ class HashEmbedder:
         for word in _WORD.findall(text.lower()):
             digest = hashlib.sha256(word.encode()).digest()
             vector[int.from_bytes(digest[:4], "big") % self.dimensions] += 1.0 if digest[4] % 2 else -1.0
-        norm = math.sqrt(sum(v * v for v in vector)) or 1.0
+        norm = math.sqrt(sum(v * v for v in vector))
+        if norm == 0.0:  # signed buckets can cancel exactly; a cosine index rejects zero vectors
+            vector[0], norm = 1.0, 1.0
         return [v / norm for v in vector]
 
     async def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:

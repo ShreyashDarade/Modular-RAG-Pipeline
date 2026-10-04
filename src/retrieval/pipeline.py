@@ -97,7 +97,7 @@ class RetrievalPipeline:
             raise InvalidRequestError("query must not be empty")
         if len(query) > self._max_query_chars:
             raise InvalidRequestError(f"query is longer than {self._max_query_chars} characters")
-        version = await self._corpus.current()
+        version, settling = await self._corpus.state()
         fingerprint = json.dumps(
             [
                 query,
@@ -110,6 +110,8 @@ class RetrievalPipeline:
             ensure_ascii=False,
         )
         key = f"retrieve:{hashlib.sha256(fingerprint.encode()).hexdigest()}"
+        if settling:  # fresh writes may not be searchable yet: answer, but do not cache the answer
+            return _load(await self._compute(query, scope))
         raw = await self._cache.get_or_compute(key, self._ttl, lambda: self._compute(query, scope))
         return _load(raw)
 

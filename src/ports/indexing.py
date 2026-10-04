@@ -13,6 +13,10 @@ class IndexSpec:
 
     name: str
     dims: int | None
+    #: Per-index overrides of the global ES_* settings (``None`` = use the global value).
+    shards: int | None = None
+    replicas: int | None = None
+    vector_index_type: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

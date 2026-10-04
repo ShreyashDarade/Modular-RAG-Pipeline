@@ -224,6 +224,7 @@ What makes it scale, and where each knob lives:
 | Shared caching | retrieval results, query expansions and query embeddings (L1 memory + L2 Redis) with stampede protection; invalidated across replicas on ingest/delete | `CACHE_BACKEND=tiered` |
 | Shared limits | one rate limit for the whole fleet, atomic in Redis | `RATE_LIMIT_BACKEND=redis` |
 | Load shedding | above N in-flight requests new ones get `503 + Retry-After` instead of queueing into timeouts | `MAX_CONCURRENT_REQUESTS` |
+| Bounded everything | Redis connect/read timeouts, per-dependency concurrency caps, an overall deadline on requests *and* streamed answers, uploads refused with `413` before they are spooled, chat history trimmed to a character budget | `REDIS_SOCKET_TIMEOUT_SECONDS`, `REQUEST_TIMEOUT_SECONDS`, `MAX_UPLOAD_MB`, `CHAT_HISTORY_MAX_CHARS` |
 | Idempotent indexing | content-addressed chunk ids + write → sweep → ledger commit order: retries and re-ingestion never duplicate, a crash never loses the old version | — |
 | Cheap ingestion | streamed parsing, image dedupe (by content), tiny-image skip, deskew-first OCR with early exit, bounded in-flight vectors, no per-request index refresh | `OCR_*`, `INGEST_PIPELINE_DEPTH` |
 | Compact vectors | `int8_hnsw` by default; `bbq_hnsw` (~32× smaller) and shortened OpenAI embeddings available | `ES_VECTOR_INDEX_TYPE`, `OPENAI_EMBEDDING_DIMENSIONS` |
@@ -244,6 +245,23 @@ Topologies:
 
 Elasticsearch sizing is yours to set (`ES_NUMBER_OF_SHARDS`, `ES_NUMBER_OF_REPLICAS`, or per
 collection `shards` / `replicas` / `vector_index_type`). Tested against Elasticsearch **9.5** with the 9.x Python client.
+
+### Measured
+
+`python scripts/benchmark.py` starts the real HTTP stack against a local Elasticsearch with deterministic fake models
+(so it measures this system, not an LLM provider) and reports ingestion throughput, retrieval latency/throughput at several
+concurrency levels (cache-cold and cache-warm), what each CPU is doing, and the cost of one batched search against the
+serial calls of the 1.x design. On a shared 4-core VM with Elasticsearch 9.5 on the same machine:
+
+* **Ingestion** 23 documents/s (460 chunks/s) with one server process, up from 3.9 documents/s before the per-write
+  refresh waits were removed; now bound by that one process.
+* **Cache-cold retrieval** ~21 requests/s at 24 Elasticsearch searches each - Elasticsearch, not the application,
+  is saturated (~3 of 4 cores vs ~0.3). Query expansion and fuzzy matching are the levers: both off gives ~180 requests/s,
+  at a recall cost this benchmark cannot measure.
+* **Cache-warm retrieval** ~1 000-1 100 requests/s per server process, p50 7-48 ms from 8 to 64 clients.
+
+Details, the limits of these numbers (fake models, tiny corpus, shared machine) and how to reproduce them are in
+[`docs/benchmark.md`](docs/benchmark.md). Run it on your own hardware before sizing anything.
 
 ---
 
@@ -273,6 +291,8 @@ def register(registries):
 Then list `"eml"` in a collection's `parsers`, or leave it open to all. No core file changes.
 Custom providers receive `(model_id, spec, settings)` and return an object satisfying
 `ChatModel` / `Embedder` (`src/ports/models.py`).
+
+---
 
 ---
 
@@ -322,6 +342,10 @@ writes were logged but reported as success; OCR confidence was always 0.0 (EasyO
 `paragraph=True` drops it) so the "pick the better pass" logic never ran; deskew never corrected real
 scans; one-chunk pages got no keywords; Devanagari words were shredded in keyword extraction;
 chunks started with a stray `.` / `।`; uploads trusted client file names and had no size limit.
+The OCR "clean-up" rewrote *correct* text (`learn` → `leam`, `class` → `dass`, `2020` → `2०2०` in Hindi, URLs split into
+`www. example. com`, `&`/`%`/`-` deleted, and a Devanagari word-final nukta glued to the next word); CSV cells
+containing newlines were merged; XLSX rows after a long blank gap were silently dropped; chat history was sent to
+the model without any size limit.
 
 ---
 
@@ -338,7 +362,8 @@ The integration suite runs the real pipeline end to end against live Elasticsear
 deterministic fake models (registered through the real plug-in hook): multi-format ingestion,
 idempotent re-ingestion, collection isolation, the HTTP API, the job queues including crash
 take-over and heartbeats, a multi-replica + separate-worker topology, MCP over HTTP with the SDK's
-own client, and the CLI. OCR tests use real EasyOCR weights when available (`RAG_TEST_OCR_MODELS`).
+own client, and the CLI. OCR tests use real EasyOCR weights when available (`RAG_TEST_OCR_MODELS`), including a correctly shaped Hindi
+rendering that goes through OCR, ingestion and lexical search. Around 93% of `src/` is covered.
 
 ---
 

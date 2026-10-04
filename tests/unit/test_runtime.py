@@ -76,6 +76,23 @@ async def test_corpus_version_reads_are_memoised():
     assert Counting.reads == 1, "hot path costs no extra round trips"
 
 
+async def test_corpus_is_settling_for_a_while_after_a_bump_on_every_replica():
+    shared = MemoryCache(10)
+    writer = CorpusVersion(shared, refresh_seconds=0, settle_seconds=0.4)
+    reader = CorpusVersion(shared, refresh_seconds=0, settle_seconds=0.4)
+    assert await reader.state() == (0, False)
+    await writer.bump()
+    assert await reader.state() == (1, True), "new version, but its data may not be searchable yet"
+    await asyncio.sleep(0.5)
+    assert await reader.state() == (1, False)
+
+
+async def test_a_corpus_without_a_settle_window_never_reports_settling():
+    version = CorpusVersion(MemoryCache(10), refresh_seconds=0)
+    await version.bump()
+    assert await version.state() == (1, False)
+
+
 async def test_cached_call_computes_once_for_concurrent_identical_requests():
     calls = 0
 

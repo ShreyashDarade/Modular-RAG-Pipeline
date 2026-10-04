@@ -67,6 +67,7 @@ dev = [
     "fakeredis>=2.39",
     "ruff>=0.16",
     "mypy>=2.4",
+    "psutil>=7.0",  # scripts/benchmark.py
 ]
 
 [project.scripts]
@@ -101,8 +102,6 @@ ignore = ["E501", "B008", "RUF012"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["B", "SIM", "RUF", "ASYNC"]
-# Carried over unchanged; the Devanagari digit in the correction table is intentional.
-"src/parsing/ocr/cleanup.py" = ["RUF001", "SIM108", "SIM114"]
 
 [tool.mypy]
 python_version = "3.12"

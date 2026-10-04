@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import socket
 import sys
 import threading
@@ -167,3 +168,32 @@ async def test_mcp_over_stdio(make_settings, rag_toml: Path, run_id: str, tmp_pa
         if names:
             es.indices.delete(index=names, ignore_unavailable=True)
         es.close()
+
+
+@pytest.mark.parametrize(
+    "live_server", [{"rate_limit_per_minute": 3, "rate_limit_backend": "memory"}], indirect=True
+)
+def test_mcp_calls_are_rate_limited_per_client_like_rest(live_server: str):
+    """Regression: the MCP mount bypassed the limiter, so ask_question could be called without
+    limit while the equivalent REST endpoint was limited."""
+    headers = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
+    call = {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
+    codes = [httpx.post(f"{live_server}/mcp", json=call, headers=headers).status_code for _ in range(5)]
+    assert codes == [200, 200, 200, 429, 429]
+    limited = httpx.post(f"{live_server}/mcp", json=call, headers=headers)
+    assert int(limited.headers["retry-after"]) >= 1 and limited.json()["code"] == "rate_limited"
+    assert httpx.get(f"{live_server}/health").status_code == 200
+
+
+async def test_mcp_tool_calls_carry_the_request_deadline(container, monkeypatch):
+    from mcp.client import Client
+    from src.mcp_server.server import build_mcp_server
+
+    async def slow(*args, **kwargs):
+        await asyncio.sleep(30)
+
+    container.settings.request_timeout_seconds = 1
+    monkeypatch.setattr(container.retrieval, "retrieve", slow)
+    async with Client(build_mcp_server(lambda: container)) as client:
+        result = await client.call_tool("search_documents", {"query": "anything"})
+    assert result.is_error and "timeout" in result.content[0].text

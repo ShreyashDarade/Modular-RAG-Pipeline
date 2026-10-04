@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.errors import install_error_handlers
-from src.api.middleware import RequestContextMiddleware
+from src.api.middleware import MaxBodySizeMiddleware, RequestContextMiddleware
 from src.api.routes import catalog, chat, ingest, ops, search
 from src.api.version import VERSION
 from src.core.config import Settings, get_settings
@@ -69,6 +69,8 @@ def create_app(settings: Settings | None = None, container: Container | None = N
                         "ingestion workers did not drain within %ss", settings.shutdown_grace_seconds
                     )
                     worker.cancel()
+                except Exception as exc:  # the worker died earlier; cleanup below must still run
+                    logger.error("ingestion worker had stopped with an error", exc_info=exc)
             if owned:
                 await active.close()
 
@@ -88,6 +90,11 @@ def create_app(settings: Settings | None = None, container: Container | None = N
         allow_methods=["*"],
         allow_headers=["*"],
         expose_headers=["X-Request-ID", "X-RateLimit-Limit", "X-RateLimit-Remaining", "Retry-After"],
+    )
+    app.add_middleware(
+        MaxBodySizeMiddleware,
+        path="/api/v1/ingest",
+        max_bytes=settings.max_upload_bytes + 1024 * 1024,  # + multipart overhead
     )
     app.add_middleware(RequestContextMiddleware, max_in_flight=settings.max_concurrent_requests)
     for router in (ops.router, ingest.router, search.router, chat.router, catalog.router):

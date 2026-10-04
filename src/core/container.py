@@ -9,13 +9,14 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from src.chat.answer import AnswerService
 from src.chat.service import ChatService
 from src.core.bootstrap import build_registries
 from src.core.config import Settings, load_rag_config
-from src.core.errors import ConfigError
+from src.core.errors import ConfigError, InvalidRequestError
 from src.core.logger import logger
 from src.core.registry import Registries
 from src.core.specs import RagConfig
@@ -80,7 +81,7 @@ class Container:
         registries = registries or build_registries(settings)
         config = config or load_rag_config(settings)
         cache = registries.caches.create(settings.cache_backend, settings)
-        corpus = CorpusVersion(cache)
+        corpus = CorpusVersion(cache, settle_seconds=settings.search_settle_seconds)
         models = ModelRegistry(config, settings, registries, query_cache=cache)
 
         elastic = ElasticConnection(settings)
@@ -195,14 +196,25 @@ class Container:
         specs: list[IndexSpec] = [IndexSpec(self.settings.es_index_registry, None)]
         for collection in self.config.collections.values():
             dims = self.models.embedder(collection.embedding_model).dimensions
-            specs += [IndexSpec(name, dims) for name in collection.index_names().values()]
+            specs += [
+                IndexSpec(
+                    name,
+                    dims,
+                    shards=collection.shards,
+                    replicas=collection.replicas,
+                    vector_index_type=collection.vector_index_type,
+                )
+                for name in collection.index_names().values()
+            ]
         await self.writer.ensure_indices(specs)
         await self.jobs.start()
 
     async def start_watchers(self) -> None:
         if not (self.settings.watch_data_dir and self.ingestion):
             return
-        extensions = self.ingestion._parsers.extensions
+        from src.ingestion.watcher import DataDirectoryWatcher
+
+        extensions = self.parsers.extensions
         for name, collection in self.config.collections.items():
 
             async def submit(path, _name=name) -> None:
@@ -216,6 +228,10 @@ class Container:
 
     async def handle_job(self, spec: JobSpec) -> dict:
         assert self.ingestion is not None, "this process was built without the ingestion stack"
+        # Jobs arrive through a shared queue: whoever can write to it must not be able to make a worker
+        # read arbitrary files. (Direct CLI ingestion does not go through here and may use any path.)
+        if not await asyncio.to_thread(self.store.within_data_dir, Path(spec.path)):
+            raise InvalidRequestError(f"refusing to ingest a path outside the data directory: {spec.path}")
         return (await self.ingestion.ingest(spec)).to_dict()
 
     def start_embedded_worker(self, stop: asyncio.Event) -> asyncio.Task[None]:
