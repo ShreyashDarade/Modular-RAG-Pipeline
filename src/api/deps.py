@@ -6,6 +6,7 @@ from typing import Annotated
 
 from fastapi import Depends, Request, Response
 
+from src.application import RagService
 from src.core.container import Container
 from src.core.errors import RateLimitedError
 from src.runtime.concurrency import deadline as request_deadline
@@ -17,6 +18,14 @@ def get_container(request: Request) -> Container:
 
 
 ContainerDep = Annotated[Container, Depends(get_container)]
+
+
+def get_service(request: Request) -> RagService:
+    """The use-case layer. Routes call it and translate - they implement no pipeline logic themselves."""
+    return request.app.state.service
+
+
+ServiceDep = Annotated[RagService, Depends(get_service)]
 
 
 async def rate_limit(request: Request, response: Response, container: ContainerDep) -> None:

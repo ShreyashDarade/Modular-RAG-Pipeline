@@ -44,7 +44,11 @@ Elasticsearch and Redis).
                                      conversations · locks          (GPU/CPU, scale independently)
 ```
 
-Code is organised as **ports and adapters**. Orchestrators depend only on the small protocols in
+Code is organised as **ports and adapters**, and the architecture is a **contract that is checked, not a
+convention**: [`docs/framework.md`](docs/framework.md) defines the layers, the public surfaces, the
+extension points and the versioning rules *first*; [`docs/adr/`](docs/adr/) records why; and CI fails when
+code breaks them (import layering and third-party confinement, the checked-in OpenAPI document, the public
+SDK surface, conformance suites for every port). Orchestrators depend only on the small protocols in
 `src/ports/`; `src/core/container.py` is the one place that picks concrete classes.
 
 ```
@@ -62,7 +66,11 @@ src/
   jobs/         in-process queue · Redis Streams queue (workers, take-over, locks)
   chat/         answer service · chat service · conversation stores
   runtime/      caches · rate limiters · bulkhead / single-flight · Prometheus metrics
+  contracts/    wire models of the REST API (pydantic only) - shared by the API and the SDK
+  application/  RagService: every use case, implemented once; HTTP and the embedded SDK are thin adapters over it
+  evaluation/   offline retrieval / answer evaluation (rag eval)
   api/ cli/ mcp_server/ worker.py                        (entry points)
+turinton_rag/   the public Python SDK (client, in-process engine, errors, models, extension + testing helpers)
 ```
 
 How that maps to SOLID, concretely:
@@ -210,6 +218,66 @@ any request). Behind a real domain also set `MCP_ALLOWED_HOSTS=["rag.example.com
 { "mcpServers": { "rag": { "command": "rag-mcp", "env": { "ES_HOST": "...", "OPENAI_API_KEY": "..." } } } }
 // remote clients: point them at  https://rag.example.com/mcp
 ```
+
+---
+
+## Python SDK
+
+One package, two ways to use the same interface. `pip install turinton-rag` is a **thin client**
+(`httpx` + `pydantic`, a dozen packages in all); the engine is an extra.
+
+```python
+# Remote: talk to a running server. Thin install.
+from turinton_rag import RagClient                    # blocking;  AsyncRagClient is the async one
+
+with RagClient("http://localhost:8000", api_key="...") as rag:
+    rag.documents.ingest("report.pdf", collection="finance")
+    result = rag.retrieve("cloud revenue growth", collections=["finance"], kinds=["text", "table"])
+    answer = rag.ask("What changed in Q2?", model="claude")
+    turn = rag.chat.send("And the margin?")
+    for event in rag.chat.stream("Summarise it", conversation_id=turn.conversation_id):
+        ...                                            # ChatStartEvent, ChatDeltaEvent..., ChatEndEvent
+```
+
+```python
+# Embedded: the whole pipeline inside your application.  pip install 'turinton-rag[engine,worker]'
+from turinton_rag import AsyncRag
+
+async with await AsyncRag.create() as rag:            # configuration: env / .env / RAG_CONFIG, as for the server
+    await rag.documents.ingest("report.pdf")
+    answer = await rag.ask("What changed in Q2?")
+    report = await rag.evaluate("cases.jsonl")         # experimental: only where the engine is
+```
+
+* **Same interface, same models, same errors in both modes.** The public methods are written once
+  (`turinton_rag/_facade.py`) over a narrow transport protocol; the HTTP and in-process backends only move
+  requests. A `404 not_found` over HTTP and a `NotFoundError` in-process are the same exception, with the same
+  `code`; errors rebuilt from a response also carry `request_id` and `details` (e.g. the failed job's id).
+* **Capability differences are explicit.** `evaluate()` and `.engine` exist only on `Rag` / `AsyncRag`; the HTTP
+  client has no such attribute rather than a method that fails at run time.
+* **Async is the implementation; sync is a bridge** over one background event loop. A blocking call from inside
+  a running event loop is a `UsageError`, not a silent stall.
+* **Retries are conservative.** Connection failures and 429/503 are retried for every call (the server refused
+  before doing work); 408/502/504 only for idempotent calls (reads, and ingestion, which is idempotent by content
+  checksum) - a chat turn is never re-sent after a gateway error, because it may already have been recorded.
+  `Retry-After` is honoured. Responses are validated strictly (a malformed one is a `ResponseError`) but unknown
+  fields are ignored, so a newer server never breaks an older SDK.
+* **Extending** uses the same package: `turinton_rag.extend` has the port protocols a plug-in implements, and
+  `turinton_rag.testing` has `check_embedder`, `check_reranker`, `check_parser`, ... - the conformance checks the
+  built-in components pass in CI - so a plug-in can prove it honours the contract.
+
+What is public, how it may change, and how deprecations work (`turinton_rag.deprecated`, a two-minor-release
+window) are in [`docs/framework.md`](docs/framework.md). Everything under `src.*` is internal.
+
+### Install matrix
+
+| You want | Install |
+|---|---|
+| a client for a server somebody runs | `pip install turinton-rag` |
+| the pipeline inside your application | `pip install 'turinton-rag[engine]'` (+ `worker` to parse PDFs / run OCR, `local` for self-hosted models) |
+| an API replica | `pip install 'turinton-rag[api]'` (the Docker `EXTRAS` build argument) |
+| an ingestion worker | `pip install 'turinton-rag[worker,docx,xlsx]'` |
+| everything | `pip install 'turinton-rag[all]'` |
 
 ---
 
@@ -390,9 +458,14 @@ the model without any size limit.
 
 ```bash
 pip install -e ".[all,dev]"
-pytest tests/unit                      # no services needed
-pytest tests/integration               # needs Elasticsearch (RAG_TEST_ES_URL) and Redis (RAG_TEST_REDIS_URL)
-ruff check src tests && ruff format --check src tests && mypy src
+pytest tests/unit tests/architecture tests/contract tests/conformance    # no services needed
+pytest tests/integration tests/sdk     # needs Elasticsearch (RAG_TEST_ES_URL) and Redis (RAG_TEST_REDIS_URL)
+pytest -m packaging tests/sdk/test_packaging.py   # builds the wheel, installs it bare into a clean venv (needs uv)
+ruff check src tests scripts turinton_rag && ruff format --check src tests scripts turinton_rag
+mypy src turinton_rag                  # turinton_rag (the public SDK) is held to strict typing
+lint-imports                           # architecture contracts (layering, third-party confinement, thin client)
+python scripts/export_openapi.py       # after an intentional wire-contract change; tests/contract fails until you do
+python scripts/api_surface.py --write  # after an intentional public-API change
 ```
 
 The integration suite runs the real pipeline end to end against live Elasticsearch/Redis with
@@ -402,7 +475,8 @@ take-over and heartbeats, a multi-replica + separate-worker topology, MCP over H
 own client, and the CLI. OCR tests use real EasyOCR weights when available (`RAG_TEST_OCR_MODELS`), including a correctly shaped Hindi
 rendering that goes through OCR, ingestion and lexical search. The evaluation harness is tested against
 hand-computed metric values and end to end through the CLI. Local-model tests use real weights when they are in the Hugging Face
-cache. Around 94% of `src/` is covered.
+cache. The SDK's parity suite (`tests/sdk/`) runs the same test bodies against the embedded engine and the HTTP client through
+the real application, and one test points both at the *same* engine and compares their outputs. Around 94% of `src/` is covered.
 
 ---
 

@@ -105,7 +105,9 @@ class LangChainEmbedder(_Instrumented):
         #: use their own ``aembed_query`` for each query.
         self._batch_queries = batch_queries
 
-    async def _call(self, operation: str, count: int, call: Callable[[], Awaitable[list[list[float]]]]) -> list[list[float]]:
+    async def _call(
+        self, operation: str, count: int, call: Callable[[], Awaitable[list[list[float]]]]
+    ) -> list[list[float]]:
         started = time.perf_counter()
         try:
             async with self._bulkhead:

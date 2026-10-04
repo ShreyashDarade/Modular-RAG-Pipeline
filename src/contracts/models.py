@@ -1,10 +1,16 @@
+"""Request and response models of the ``/api/v1`` REST API (and of the SDK).
+
+Responses are read tolerantly by clients (unknown fields are ignored) but validated strictly (required fields
+and types), so a newer server never breaks an older SDK and a malformed response is never accepted quietly.
+"""
+
 from __future__ import annotations
 
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from src.core.types import ContentKind, JobRecord, RetrievedDocument
+from src.core.types import ContentKind
 
 
 class _Scoped(BaseModel):
@@ -34,7 +40,7 @@ class ChatRequest(_Scoped):
     model: str | None = None
 
 
-class RetrievedDocumentSchema(BaseModel):
+class RetrievedChunk(BaseModel):
     content: str
     score: float
     source: str | None = None
@@ -44,41 +50,23 @@ class RetrievedDocumentSchema(BaseModel):
     collection: str | None = None
     kind: ContentKind | None = None
 
-    @classmethod
-    def of(cls, doc: RetrievedDocument) -> RetrievedDocumentSchema:
-        meta = doc.metadata
-        return cls(
-            content=doc.content,
-            score=doc.final_score,
-            source=meta.get("source"),
-            page=meta.get("page"),
-            type=meta.get("type") or meta.get("content_type"),
-            keywords=meta.get("keywords"),
-            collection=doc.collection,
-            kind=doc.kind,
-        )
-
 
 class RetrieveResponse(BaseModel):
     query: str
     expanded_queries: list[str]
-    documents: list[RetrievedDocumentSchema]
+    documents: list[RetrievedChunk]
 
 
-class AskContextItem(RetrievedDocumentSchema):
+class ContextChunk(RetrievedChunk):
     rank: int
 
-    @classmethod
-    def ranked(cls, rank: int, doc: RetrievedDocument) -> AskContextItem:
-        return cls(rank=rank, **RetrievedDocumentSchema.of(doc).model_dump())
 
-
-class AskResponseSchema(BaseModel):
+class AskResponse(BaseModel):
     query: str
     expanded_queries: list[str]
     answer: str
     model: str
-    context: list[AskContextItem]
+    context: list[ContextChunk]
 
 
 class ChatResponse(BaseModel):
@@ -86,17 +74,17 @@ class ChatResponse(BaseModel):
     answer: str
     standalone_query: str
     model: str
-    context: list[AskContextItem]
+    context: list[ContextChunk]
 
 
-class ChatMessageSchema(BaseModel):
+class ConversationMessage(BaseModel):
     role: Literal["system", "user", "assistant"]
     content: str
 
 
 class ConversationResponse(BaseModel):
     conversation_id: str
-    messages: list[ChatMessageSchema]
+    messages: list[ConversationMessage]
 
 
 class IngestResponse(BaseModel):
@@ -109,29 +97,11 @@ class IngestResponse(BaseModel):
     reindexed: bool = True
     job_id: str
     status: Literal["queued", "running", "succeeded", "failed"]
-    status_url: str
+    #: Where to poll the job over HTTP; absent when the engine runs in-process (use ``jobs.get``).
+    status_url: str | None = None
     document_id: str | None = None
     total_pages: int | None = None
     warnings: list[str] = Field(default_factory=list)
-
-    @classmethod
-    def of(cls, record: JobRecord, status_url: str, source: str) -> IngestResponse:
-        result: dict[str, Any] = record.result or {}
-        return cls(
-            source=result.get("source", source),
-            collection=record.spec.collection,
-            text_chunks=result.get("text_chunks", 0),
-            table_chunks=result.get("table_chunks", 0),
-            image_chunks=result.get("image_chunks", 0),
-            skipped_reason=result.get("skipped_reason"),
-            reindexed=result.get("reindexed", record.status != "succeeded"),
-            job_id=record.id,
-            status=record.status,
-            status_url=status_url,
-            document_id=result.get("document_id"),
-            total_pages=result.get("total_pages"),
-            warnings=result.get("warnings", []),
-        )
 
 
 class JobResponse(BaseModel):
@@ -146,22 +116,6 @@ class JobResponse(BaseModel):
     created_at: float
     started_at: float | None = None
     finished_at: float | None = None
-
-    @classmethod
-    def of(cls, record: JobRecord) -> JobResponse:
-        return cls(
-            job_id=record.id,
-            status=record.status,
-            collection=record.spec.collection,
-            source=record.spec.path,
-            attempts=record.attempts,
-            result=record.result,
-            error=record.error,
-            error_code=record.error_code,
-            created_at=record.created_at,
-            started_at=record.started_at,
-            finished_at=record.finished_at,
-        )
 
 
 class CollectionInfo(BaseModel):
@@ -214,3 +168,37 @@ class DeleteResponse(BaseModel):
     source: str
     collection: str
     deleted_count: int
+
+
+# --- chat stream events (server-sent events: ``event: <name>`` + JSON ``data``) --------------------------
+class ChatStartEvent(BaseModel):
+    """First event: the conversation id and the sources the answer will be written from."""
+
+    conversation_id: str
+    standalone_query: str
+    expanded_queries: list[str]
+    model: str
+    context: list[ContextChunk]
+
+
+class ChatDeltaEvent(BaseModel):
+    text: str
+
+
+class ChatEndEvent(BaseModel):
+    answer: str
+
+
+ChatStreamEvent = ChatStartEvent | ChatDeltaEvent | ChatEndEvent
+STREAM_EVENT_NAMES: dict[str, type[ChatStartEvent] | type[ChatDeltaEvent] | type[ChatEndEvent]] = {
+    "start": ChatStartEvent,
+    "delta": ChatDeltaEvent,
+    "end": ChatEndEvent,
+}
+
+
+class ErrorBody(BaseModel):
+    """The JSON body of every error response (and of a mid-stream ``error`` event)."""
+
+    detail: str
+    code: str

@@ -48,11 +48,13 @@ charset-normalizer==3.5.2
 click==8.5.0
     # via
     #   huggingface-hub
+    #   import-linter
     #   uvicorn
 cloudpickle==3.1.2
     # via joblib
-colorama==0.4.6 ; sys_platform == 'win32'
+colorama==0.4.6
     # via
+    #   griffecli
     #   pytest
     #   tqdm
     #   typer
@@ -102,6 +104,16 @@ google-auth==2.59.1
     # via google-genai
 google-genai==2.28.0
     # via langchain-google-genai
+griffe==2.3.0
+    # via turinton-rag (pyproject.toml)
+griffecli==2.3.0
+    # via griffe
+griffelib==2.3.0
+    # via
+    #   griffe
+    #   griffecli
+grimp==3.17
+    # via import-linter
 h11==0.16.0
     # via
     #   httpcore
@@ -145,6 +157,8 @@ idna==3.20
     #   yarl
 imageio==2.38.0
     # via scikit-image
+import-linter==2.15
+    # via turinton-rag (pyproject.toml)
 iniconfig==2.3.0
     # via pytest
 jinja2==3.1.6
@@ -410,7 +424,9 @@ requests==2.34.2
 requests-toolbelt==1.0.0
     # via langsmith
 rich==15.0.0
-    # via typer
+    # via
+    #   import-linter
+    #   typer
 rpds-py==2026.6.3
     # via
     #   jsonschema
@@ -505,6 +521,7 @@ typing-extensions==4.16.0
     #   google-genai
     #   httpx2
     #   huggingface-hub
+    #   import-linter
     #   langchain-core
     #   langchain-protocol
     #   langsmith

@@ -31,6 +31,12 @@ def _reachable_redis() -> bool:
         return False
 
 
+def pytest_configure(config):
+    # Nothing in this repo may call a name it has itself deprecated (docs/framework.md, section 7). Added here, not in
+    # pyproject.toml: an ini filter imports turinton_rag while the config loads, before coverage starts measuring.
+    config.addinivalue_line("filterwarnings", "error::turinton_rag.RagDeprecationWarning")
+
+
 def pytest_collection_modifyitems(config, items):
     es, rd = _reachable_es(), _reachable_redis()
     for item in items:

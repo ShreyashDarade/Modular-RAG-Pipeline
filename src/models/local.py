@@ -122,10 +122,14 @@ class HuggingFaceEmbedder:
             )
         except OSError as exc:
             raise ConfigError(f"{owner}: cannot load '{spec.model}': {exc}") from exc
-        self._max_length = resolve_max_length(owner, options["max_length"], self._tokenizer, self._model.config)
+        self._max_length = resolve_max_length(
+            owner, options["max_length"], self._tokenizer, self._model.config
+        )
         hidden = int(self._model.config.hidden_size)
         if hidden != spec.dimensions:
-            raise ConfigError(f"{owner}: the model outputs {hidden} dimensions, `dimensions` says {spec.dimensions}")
+            raise ConfigError(
+                f"{owner}: the model outputs {hidden} dimensions, `dimensions` says {spec.dimensions}"
+            )
         self._slots = asyncio.Semaphore(positive_int(owner, "concurrency", options["concurrency"]))
         logger.info("loaded embedding model %s on %s", spec.model, self._device)
 

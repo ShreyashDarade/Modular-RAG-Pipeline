@@ -31,9 +31,42 @@ jobs:
           cache-dependency-path: requirements-dev.txt
       - run: pip install torch torchvision --index-url "$TORCH_INDEX"
       - run: pip install -e ".[$EXTRAS]"
-      - run: ruff check src tests scripts
-      - run: ruff format --check src tests scripts
-      - run: mypy src
+      - run: ruff check src tests scripts turinton_rag
+      - run: ruff format --check src tests scripts turinton_rag
+      - run: mypy src turinton_rag   # turinton_rag (the public SDK) is held to strict typing, see pyproject.toml
+      # Architecture as code (docs/framework.md): layering, third-party confinement, thin-client purity.
+      - run: lint-imports
+
+  api-compat:
+    name: Public API compatibility (griffe)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # griffe diffs against the latest release tag, so it needs history and tags
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install griffe
+      - name: Compare turinton_rag with the latest release tag
+        run: |
+          tag="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+          if [ -z "$tag" ]; then
+            echo "No release tag yet: nothing to compare against (tests/sdk/api_surface.txt still guards the surface)."
+          else
+            griffe check turinton_rag --search . --against "$tag"
+          fi
+
+  packaging:
+    name: Thin install (wheel in a clean virtualenv)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install uv pytest pytest-asyncio httpx pydantic
+      - run: pytest tests/sdk/test_packaging.py -q -m packaging
 
   unit:
     name: Unit tests (Python ${{ matrix.python }})
@@ -51,7 +84,7 @@ jobs:
           cache-dependency-path: requirements-dev.txt
       - run: pip install torch torchvision --index-url "$TORCH_INDEX"
       - run: pip install -e ".[$EXTRAS]"
-      - run: pytest tests/unit -q
+      - run: pytest tests/unit tests/architecture tests/contract tests/conformance tests/sdk/test_facade.py tests/sdk/test_http_backend.py tests/sdk/test_api_surface.py -q -m 'not packaging'
 
   integration:
     name: Integration tests (Elasticsearch + Redis)
@@ -94,4 +127,4 @@ jobs:
           python -c "from huggingface_hub import snapshot_download as d;
           [d(r) for r in ('cross-encoder/ms-marco-MiniLM-L6-v2', 'BAAI/bge-small-en-v1.5')]"
       # OCR tests skip themselves unless EasyOCR weights are present; mount them via RAG_TEST_OCR_MODELS to run them.
-      - run: pytest tests/integration -q
+      - run: pytest tests/integration tests/sdk -q -m 'not packaging'   # tests/sdk includes the embedded-vs-HTTP parity suite

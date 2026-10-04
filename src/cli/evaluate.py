@@ -13,19 +13,17 @@ from src.core.config import get_settings, load_rag_config
 from src.core.container import Container
 from src.core.errors import ConfigError, RagError
 from src.core.logger import configure_logging
-from src.evaluation.answers import AnswerEvaluator
 from src.evaluation.dataset import load_dataset, write_dataset
 from src.evaluation.generate import generate_cases
-from src.evaluation.judge import LlmJudge
 from src.evaluation.report import (
     EvalReport,
-    build_report,
     check_report,
     compare_reports,
     render_comparison,
     render_report,
 )
-from src.evaluation.runner import Granularity, RetrievalEvaluator
+from src.evaluation.runner import Granularity
+from src.evaluation.session import evaluate_container
 from src.evaluation.variants import Variant, build_variant, parse_variant, validate_variant
 
 eval_app = typer.Typer(
@@ -132,44 +130,21 @@ async def evaluate_variant(
     dataset = load_dataset(dataset_path)
     container: Container = await build_variant(settings, config, variant, ks, granularity)
     try:
-        s, c = container.settings, container.config
-        evaluator = RetrievalEvaluator(
-            container.retrieval,
+        typer.echo(f"[{variant.name}] {len(dataset)} queries" + (" + answers" if answers else ""), err=True)
+        return await evaluate_container(
+            container,
+            dataset,
+            name=variant.name,
+            collection=collection,
             ks=ks,
             granularity=granularity,
-            default_collection=collection,
+            answers=answers,
+            judge_model=judge_model,
+            answer_model=answer_model,
             concurrency=concurrency,
+            overrides=variant.overrides,
+            progress=lambda stage, done, total: _progress(stage)(done, total),
         )
-        typer.echo(f"[{variant.name}] retrieval over {len(dataset)} queries", err=True)
-        results = await evaluator.run(dataset, _progress("retrieval"))
-        if answers:
-            judge = LlmJudge(container.models.chat(judge_model or c.utility_model))
-            typer.echo(
-                f"[{variant.name}] answers + judging (model {answer_model or c.default_chat_model}, judge {judge.model_id})",
-                err=True,
-            )
-            await AnswerEvaluator(container.answers, judge, evaluator, answer_model=answer_model).run(
-                dataset, results, _progress("answers")
-            )
-        spec = c.reranker_spec()
-        meta = {
-            "collection": collection or c.default_collection,
-            "ks": ks,
-            "granularity": granularity,
-            "concurrency": concurrency,
-            "short_rankings": sum(1 for r in results if r.error is None and len(r.ranked) < max(ks)),
-            "config": {
-                "reranker": f"{spec.provider}:{spec.model}" if spec.model else spec.provider,
-                "query_expander": c.query_expander,
-                "hybrid_alpha": s.hybrid_alpha,
-                "candidates": s.rerank_candidates,
-                "top_k": s.retriever_top_k,
-                "fuzziness": s.es_bm25_fuzziness,
-                **({"overrides": dict(variant.overrides)} if variant.overrides else {}),
-            },
-            **({"judge_model": judge.model_id} if answers else {}),
-        }
-        return build_report(variant.name, dataset, results, meta)
     finally:
         await container.close()
 

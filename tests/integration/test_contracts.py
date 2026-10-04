@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -92,7 +93,15 @@ async def limiter(request, namespace) -> AsyncIterator[Any]:
     await instance.close()
 
 
+async def _inside_one_window(seconds: int = 60, margin: float = 2.0) -> None:
+    """Fixed-window limiters count per wall-clock window: wait out a boundary so a test burst cannot straddle it."""
+    left = seconds - (time.time() % seconds)
+    if left < margin:
+        await asyncio.sleep(left + 0.1)
+
+
 async def test_limiter_allows_up_to_the_limit_then_blocks_per_key(limiter):
+    await _inside_one_window()
     decisions = [await limiter.hit("client-a", 3, 60) for _ in range(5)]
     assert [d.allowed for d in decisions] == [True, True, True, False, False]
     assert [d.remaining for d in decisions] == [2, 1, 0, 0, 0]
@@ -101,6 +110,7 @@ async def test_limiter_allows_up_to_the_limit_then_blocks_per_key(limiter):
 
 
 async def test_limiter_is_exact_under_concurrency(limiter):
+    await _inside_one_window()
     decisions = await asyncio.gather(*(limiter.hit("burst", 10, 60) for _ in range(40)))
     assert sum(d.allowed for d in decisions) == 10, "no over- or under-admission when requests race"
 

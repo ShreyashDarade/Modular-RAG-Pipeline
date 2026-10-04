@@ -40,7 +40,9 @@ class ModelRegistry:
         for name, chat_spec in config.chat_models.items():
             self._chat[name] = registries.chat_providers.create(chat_spec.provider, name, chat_spec, settings)
         for name, embedding_spec in config.embedding_models.items():
-            inner = registries.embedding_providers.create(embedding_spec.provider, name, embedding_spec, settings)
+            inner = registries.embedding_providers.create(
+                embedding_spec.provider, name, embedding_spec, settings
+            )
             self._embedders[name] = CachingEmbedder(
                 inner,
                 max_entries=settings.embedding_cache_entries,

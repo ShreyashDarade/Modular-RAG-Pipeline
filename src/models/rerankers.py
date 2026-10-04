@@ -220,10 +220,15 @@ class ApiReranker:
         UPSTREAM_LATENCY.labels(self._provider, "rerank").observe(time.perf_counter() - started)
         scores: dict[int, float] = {}
         for item in payload.get("results") or []:
-            index, score = item.get("index") if isinstance(item, dict) else None, (
-                item.get("relevance_score") if isinstance(item, dict) else None
+            index, score = (
+                item.get("index") if isinstance(item, dict) else None,
+                (item.get("relevance_score") if isinstance(item, dict) else None),
             )
-            if not isinstance(index, int) or not 0 <= index < len(documents) or not isinstance(score, int | float):
+            if (
+                not isinstance(index, int)
+                or not 0 <= index < len(documents)
+                or not isinstance(score, int | float)
+            ):
                 raise ModelError(f"{self._owner}: malformed result entry: {item!r}")
             scores[index] = float(score)
         if len(scores) != len(documents):
