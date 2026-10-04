@@ -1,0 +1,85 @@
+# Local, production-shaped stack: Elasticsearch + Redis + stateless API replicas + ingestion workers.
+#
+#   cp .env.example .env            # add OPENAI_API_KEY
+#   docker compose up --build
+#   docker compose up --scale api=3 --scale worker=2     # scale out: replicas share only ES + Redis
+#
+# Security is DISABLED on the bundled Elasticsearch for local use. Use Elastic Cloud (ES_CLOUD_ID +
+# ES_API_KEY) or a secured cluster in any shared environment.
+
+x-common-env: &common-env
+  ES_HOST: http://elasticsearch:9200
+  REDIS_URL: redis://redis:6379
+  REDIS_NAMESPACE: rag
+  INGEST_BACKEND: redis            # a shared queue, so API replicas and workers can be scaled independently
+  CACHE_BACKEND: tiered            # per-replica L1 + shared Redis L2
+  RATE_LIMIT_BACKEND: redis        # limits hold across replicas
+  CHAT_STORE: redis                # conversations survive restarts and are visible to every replica
+  ES_NUMBER_OF_REPLICAS: "0"       # single-node cluster; use >=1 on a real cluster
+  DATA_DIR: /data
+  # Models and collections come from OPENAI_* in .env by default. To declare several models and
+  # collections, copy config/rag.example.toml, delete the profiles you do not use (every profile
+  # is validated at start-up), mount it, and set RAG_CONFIG to its path.
+
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.5.4
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: -Xms1g -Xmx1g
+    volumes: [esdata:/usr/share/elasticsearch/data]
+    ports: ["9200:9200"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  redis:
+    image: redis:8-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      args: {EXTRAS: "api,mcp"}
+    env_file: [.env]
+    environment:
+      <<: *common-env
+      INGEST_EMBEDDED_WORKER: "false"   # API replicas only enqueue; workers do the heavy lifting
+      MCP_ENABLED: "true"
+    volumes: [data:/data]
+    ports: ["8000:8000"]
+    depends_on:
+      elasticsearch: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
+  worker:
+    build:
+      context: .
+      args: {EXTRAS: "worker,docx,xlsx"}
+    command: ["rag-worker"]
+    env_file: [.env]
+    environment:
+      <<: *common-env
+      INGEST_CONCURRENCY: "2"
+    volumes: [data:/data, models:/models]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9100/metrics', timeout=4)"]
+      interval: 30s
+    depends_on:
+      elasticsearch: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
+volumes:
+  esdata:
+  redisdata:
+  data:       # shared by API replicas and workers: uploads are written by one and read by the other
+  models:

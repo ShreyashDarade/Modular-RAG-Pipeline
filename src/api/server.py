@@ -1,306 +1,106 @@
+"""FastAPI application factory.
+
+``create_app`` wires nothing itself: the lifespan asks the composition root
+(:class:`src.core.container.Container`) for the collaborators and stores them on ``app.state``.
+Tests can pass a prebuilt container; ``uvicorn src.api.server:app`` uses the module-level app.
+"""
+
 from __future__ import annotations
 
-import time
-import hashlib
-from pathlib import Path
+import asyncio
+import contextlib
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from concurrent.futures import ThreadPoolExecutor
-from typing import Callable
 
-from fastapi import FastAPI, File, Form, UploadFile, Request, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from starlette.concurrency import run_in_threadpool
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
-from cachetools import TTLCache
 
-from src.api.schemas import (
-    AskContextItem,
-    AskRequest,
-    AskResponseSchema,
-    IngestResponse,
-    RetrieveRequest,
-    RetrieveResponse,
-    RetrievedDocumentSchema,
-)
-from src.core.config import settings
-from src.core.logger import logger
-from src.pipelines.ask import AskPipeline
-from src.pipelines.ingestion import IngestionPipeline
-from src.pipelines.retrieval import RetrievalPipeline
-from src.services.reindexer import DataDirectoryWatcher
+from src.api.errors import install_error_handlers
+from src.api.middleware import RequestContextMiddleware
+from src.api.routes import catalog, chat, ingest, ops, search
+from src.api.version import VERSION
+from src.core.config import Settings, get_settings
+from src.core.container import Container
+from src.core.logger import configure_logging, logger
 
 
-# === RATE LIMITING ===
-limiter = Limiter(key_func=get_remote_address)
+def create_app(settings: Settings | None = None, container: Container | None = None) -> FastAPI:
+    settings = settings or (container.settings if container else get_settings())
 
-# === CACHING ===
-# In-memory cache for retrieval results (use Redis in production)
-_query_cache: TTLCache = TTLCache(maxsize=1000, ttl=settings.cache_ttl_seconds)
-
-# === THREAD POOL FOR CPU-BOUND TASKS ===
-_executor = ThreadPoolExecutor(max_workers=settings.max_workers)
-
-# === PIPELINE SINGLETONS ===
-_ingestion: IngestionPipeline | None = None
-_retrieval: RetrievalPipeline | None = None
-_ask: AskPipeline | None = None
-_watcher: DataDirectoryWatcher | None = None
-
-
-def _get_cache_key(query: str) -> str:
-    return hashlib.md5(query.encode()).hexdigest()
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Startup and shutdown lifecycle management."""
-    global _ingestion, _retrieval, _ask, _watcher
-    
-    logger.info("🚀 Starting RAG-OCR Pipeline (Production Mode)")
-    logger.info(f"   Environment: {settings.environment}")
-    logger.info(f"   Rate Limit: {settings.rate_limit_per_minute} req/min")
-    logger.info(f"   Max Workers: {settings.max_workers}")
-    logger.info(f"   OCR Languages: {settings.supported_ocr_languages}")
-    
-    # Initialize pipelines
-    _ingestion = IngestionPipeline()
-    _retrieval = RetrievalPipeline()
-    _ask = AskPipeline()
-    _watcher = DataDirectoryWatcher()
-    
-    # Start file watcher
-    def _reindex_callback(path: Path) -> None:
-        if path.suffix.lower() not in settings.allowed_file_extensions:
-            return
-        logger.info("Watcher triggered reindex for %s", path)
-        _ingestion.ingest_path(path, force=True)
-    
-    _watcher.start(_reindex_callback)
-    logger.info(f"📂 Watching directory: {settings.data_dir}")
-    
-    yield  # Application runs here
-    
-    # Shutdown
-    logger.info("🛑 Shutting down...")
-    if _watcher:
-        _watcher.stop()
-    _executor.shutdown(wait=False)
-
-
-app = FastAPI(
-    title="RAG-OCR Pipeline API",
-    version="1.0.0",
-    description="Production-ready OCR and RAG pipeline with Hindi/Marathi/English support",
-    lifespan=lifespan,
-)
-
-# === MIDDLEWARE ===
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-
-# CORS for frontend integration
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately in production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-# === HEALTH CHECK ===
-@app.get("/health")
-async def health_check():
-    """Health check endpoint for load balancers and Kubernetes."""
-    return {
-        "status": "healthy",
-        "timestamp": time.time(),
-        "version": "1.0.0",
-        "environment": settings.environment,
-    }
-
-
-@app.get("/ready")
-async def readiness_check():
-    """Readiness probe - checks if all dependencies are ready."""
-    checks = {
-        "ingestion_pipeline": _ingestion is not None,
-        "retrieval_pipeline": _retrieval is not None,
-        "ask_pipeline": _ask is not None,
-    }
-    all_ready = all(checks.values())
-    return {
-        "ready": all_ready,
-        "checks": checks,
-    }
-
-
-# === API ENDPOINTS ===
-@app.post("/api/v1/ingest", response_model=IngestResponse)
-@limiter.limit(f"{settings.rate_limit_per_minute}/minute")
-async def ingest_document(
-    request: Request,
-    file: UploadFile = File(...),
-    force: bool = False,
-    image_language: str | None = Form(None),
-):
-    """
-    Ingest a document (PDF or image) into the RAG pipeline.
-    
-    Supported languages for OCR: en (English), mr (Marathi), hi (Hindi)
-    """
-    if _ingestion is None:
-        raise HTTPException(status_code=503, detail="Service not ready")
-    
-    # Validate language hint
-    if image_language and image_language not in settings.supported_ocr_languages:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported language: {image_language}. Supported: {settings.supported_ocr_languages}"
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        configure_logging(settings.log_level, settings.log_format)
+        owned = container is None
+        active = container or await Container.build(settings, role="api")
+        if settings.web_concurrency > 1 and settings.ingest_backend == "inprocess":
+            logger.warning(
+                "WEB_CONCURRENCY=%d with INGEST_BACKEND=inprocess: job status is per process. "
+                "Use INGEST_BACKEND=redis (or one process per container).",
+                settings.web_concurrency,
+            )
+        try:
+            await active.start()
+        except BaseException:
+            if owned:
+                await active.close()
+            raise
+        app.state.container = active
+        stop = asyncio.Event()
+        worker = active.start_embedded_worker(stop) if active.ingestion else None
+        await active.start_watchers()
+        logger.info(
+            "ready: collections=%s chat_models=%s ingest=%s%s",
+            sorted(active.config.collections),
+            active.models.chat_names(),
+            settings.ingest_backend,
+            " (embedded worker)" if worker else " (queue only)",
         )
-    
-    file.file.seek(0)
-    try:
-        summary = await run_in_threadpool(_ingestion.ingest_upload, file, force, image_language)
-    except Exception as e:
-        logger.error(f"Ingestion failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(e)}")
-    
-    return IngestResponse(
-        source=str(summary.source),
-        text_chunks=summary.text_chunks,
-        table_chunks=summary.table_chunks,
-        image_chunks=summary.image_chunks,
-        skipped_reason=summary.skipped_reason,
-        reindexed=summary.reindexed,
+        mcp_lifespan = app.state.mcp_lifespan if hasattr(app.state, "mcp_lifespan") else None
+        try:
+            async with mcp_lifespan() if mcp_lifespan else contextlib.nullcontext():
+                yield
+        finally:
+            stop.set()
+            if worker is not None:
+                try:
+                    await asyncio.wait_for(worker, settings.shutdown_grace_seconds)
+                except TimeoutError:
+                    logger.error(
+                        "ingestion workers did not drain within %ss", settings.shutdown_grace_seconds
+                    )
+                    worker.cancel()
+            if owned:
+                await active.close()
+
+    app = FastAPI(
+        title="RAG-OCR Pipeline API",
+        version=VERSION,
+        description="Modular multilingual RAG: multi-format ingestion with OCR, selective multi-collection "
+        "hybrid retrieval, multi-model chat.",
+        lifespan=lifespan,
     )
-
-
-@app.post("/api/v1/retrieve", response_model=RetrieveResponse)
-@limiter.limit(f"{settings.rate_limit_per_minute}/minute")
-async def retrieve_documents(request: Request, payload: RetrieveRequest):
-    """Retrieve relevant documents for a query using hybrid search."""
-    if _retrieval is None:
-        raise HTTPException(status_code=503, detail="Service not ready")
-    
-    # Check cache
-    cache_key = _get_cache_key(payload.query)
-    if cache_key in _query_cache:
-        logger.debug(f"Cache hit for query: {payload.query[:50]}...")
-        return _query_cache[cache_key]
-    
-    result = await run_in_threadpool(_retrieval.retrieve, payload.query)
-    documents = [
-        RetrievedDocumentSchema(
-            content=hit.document.page_content,
-            score=hit.score,
-            source=hit.document.metadata.get("source"),
-            page=hit.document.metadata.get("page"),
-            type=hit.document.metadata.get("type"),
-            keywords=hit.document.metadata.get("keywords"),
-        )
-        for hit in result.documents
-    ]
-    response = RetrieveResponse(
-        query=payload.query,
-        expanded_queries=result.expanded_queries,
-        documents=documents,
+    install_error_handlers(app)
+    origins = settings.cors_origins
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials="*" not in origins,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=["X-Request-ID", "X-RateLimit-Limit", "X-RateLimit-Remaining", "Retry-After"],
     )
-    
-    # Cache result
-    _query_cache[cache_key] = response
-    return response
+    app.add_middleware(RequestContextMiddleware, max_in_flight=settings.max_concurrent_requests)
+    for router in (ops.router, ingest.router, search.router, chat.router, catalog.router):
+        app.include_router(router)
+    if settings.mcp_enabled:
+        from src.mcp_server.server import mount_mcp
+
+        mount_mcp(app, settings)
+    if container is not None:
+        app.state.container = container  # visible before lifespan for tests that skip it
+    return app
 
 
-@app.post("/api/v1/ask", response_model=AskResponseSchema)
-@limiter.limit(f"{settings.rate_limit_per_minute}/minute")
-async def ask_question(request: Request, payload: AskRequest):
-    """Ask a question and get an answer based on retrieved context."""
-    if _ask is None:
-        raise HTTPException(status_code=503, detail="Service not ready")
-    
-    response = await run_in_threadpool(_ask.ask, payload.query)
-    context_items = [
-        AskContextItem(
-            rank=item["rank"],
-            score=item["score"],
-            source=item["source"],
-            page=item["page"],
-            type=item["type"],
-            keywords=item["keywords"],
-            content=item["content"],
-        )
-        for item in response.context
-    ]
-    return AskResponseSchema(
-        query=response.query,
-        expanded_queries=response.expanded_queries,
-        answer=response.answer,
-        context=context_items,
-    )
+app = create_app()
 
-
-@app.get("/api/v1/status")
-async def get_status():
-    """Get system status and configuration info."""
-    return {
-        "app_name": settings.app_name,
-        "environment": settings.environment,
-        "version": "1.0.0",
-        "elasticsearch": {
-            "cloud": bool(settings.es_cloud_id),
-            "indexes": [settings.es_index_text, settings.es_index_tables, settings.es_index_images],
-        },
-        "openai": {
-            "model": settings.openai_model,
-            "embedding_model": settings.openai_embedding_model,
-        },
-        "ocr": {
-            "gpu_enabled": settings.ocr_gpu_enabled,
-            "supported_languages": settings.supported_ocr_languages,
-        },
-        "retrieval": {
-            "top_k": settings.retriever_top_k,
-            "rerank_enabled": settings.rerank_enabled,
-            "rerank_top_k": settings.rerank_top_k,
-            "cross_references": settings.enable_cross_references,
-        },
-        "rate_limit": f"{settings.rate_limit_per_minute}/minute",
-    }
-
-
-@app.delete("/api/v1/documents")
-@limiter.limit(f"{settings.rate_limit_per_minute}/minute")
-async def delete_documents(request: Request, source: str):
-    """Delete all documents from a specific source file."""
-    if _ingestion is None:
-        raise HTTPException(status_code=503, detail="Service not ready")
-    
-    try:
-        deleted = _ingestion.indexer.delete_source(source)
-        return {
-            "success": True,
-            "source": source,
-            "deleted_count": deleted,
-        }
-    except Exception as e:
-        logger.error(f"Delete failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Delete failed: {str(e)}")
-
-
-# === ERROR HANDLERS ===
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Unhandled exception: {exc}", exc_info=True)
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "Internal server error", "type": type(exc).__name__}
-    )
-
-
-__all__ = ["app"]
-
-
+__all__ = ["app", "create_app"]
