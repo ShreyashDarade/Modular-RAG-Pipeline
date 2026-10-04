@@ -71,6 +71,11 @@ def open_upload(source: IngestSource, filename: str | None) -> tuple[Upload, boo
         name = filename or os.path.basename(str(getattr(source, "name", "")))
         if not name:
             raise InvalidRequestError("`filename` is required when ingesting a stream without a name")
+        seekable = getattr(source, "seekable", None)
+        if callable(seekable) and seekable() and source.tell() != 0:
+            # the file is ingested from where the stream is positioned: HTTP uploads rewind to the start, so
+            # hand both transports the same bytes (the caller's stream is left where it ended up)
+            return Upload(name, io.BytesIO(source.read())), True
         return Upload(name, source), False
     raise InvalidRequestError(
         f"cannot ingest a {type(source).__name__}: pass a path, bytes or a binary stream"

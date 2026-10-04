@@ -9,6 +9,7 @@ created on. A blocking call made from inside a running loop would stall that loo
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import threading
 from collections.abc import AsyncIterator, Coroutine, Iterator, Sequence
 from types import TracebackType
@@ -41,10 +42,14 @@ class LoopThread:
         self._owner = owner
         self._loop = asyncio.new_event_loop()
         self._ready = threading.Event()
+        self._closed = False
         self._thread = threading.Thread(target=self._run, name=f"ai-rag-info-{owner}", daemon=True)
         self._thread.start()
         self._ready.wait()
-        self._closed = False
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
 
     def _run(self) -> None:
         asyncio.set_event_loop(self._loop)
@@ -62,7 +67,7 @@ class LoopThread:
             "use the async class (Async...) inside async code"
         )
 
-    def run(self, coro: Coroutine[Any, Any, T]) -> T:
+    def run[T](self, coro: Coroutine[Any, Any, T]) -> T:
         try:
             self._refuse_inside_a_loop()
         except UsageError:
@@ -71,9 +76,12 @@ class LoopThread:
         if self._closed:
             coro.close()
             raise UsageError(f"{self._owner} is closed")
-        return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
+        try:
+            return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
+        except (asyncio.CancelledError, concurrent.futures.CancelledError):
+            raise UsageError(f"{self._owner} was closed while this call was still running") from None
 
-    def iterate(self, source: AsyncIterator[T]) -> Iterator[T]:
+    def iterate[T](self, source: AsyncIterator[T]) -> Iterator[T]:
         """A blocking iterator over an async one. Abandoning it (``break``, an exception) closes the source."""
         self._refuse_inside_a_loop()
         try:
@@ -88,10 +96,20 @@ class LoopThread:
                 self.run(aclose())
 
     def close(self) -> None:
+        """Stop the loop. Calls still running in other threads are cancelled (they raise ``UsageError``), so
+        no thread is ever left waiting on a loop that has stopped. Safe to call twice."""
         if self._closed:
             return
         self._closed = True
-        self._loop.call_soon_threadsafe(self._loop.stop)
+
+        async def shutdown() -> None:
+            pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+            self._loop.stop()
+
+        asyncio.run_coroutine_threadsafe(shutdown(), self._loop)
         if threading.current_thread() is not self._thread:
             self._thread.join(timeout=10)
 
@@ -262,6 +280,9 @@ class RagAPI:
         return self._bridge.run(self._api.models())
 
     def close(self) -> None:
+        """Release the connection pool / engine and stop the background loop. Safe to call twice."""
+        if self._bridge.closed:
+            return
         try:
             self._bridge.run(self._api.aclose())
         finally:

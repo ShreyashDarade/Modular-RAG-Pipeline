@@ -254,6 +254,49 @@ def test_a_blocking_iterator_yields_in_order_and_closes_the_source_when_abandone
         bridge.close()
 
 
+def test_closing_the_bridge_cancels_a_call_still_running_in_another_thread_instead_of_hanging_it():
+    bridge = LoopThread("test")
+    started, outcome = threading.Event(), []
+
+    async def forever() -> None:
+        started.set()
+        await asyncio.sleep(60)
+
+    def caller() -> None:
+        try:
+            bridge.run(forever())
+        except BaseException as exc:  # noqa: BLE001 - recording whatever the caller sees
+            outcome.append(exc)
+
+    thread = threading.Thread(target=caller, daemon=True)
+    thread.start()
+    assert started.wait(5)
+    bridge.close()
+    thread.join(5)
+    assert not thread.is_alive(), "the waiting thread was left blocked on a stopped loop"
+    assert len(outcome) == 1 and isinstance(outcome[0], UsageError) and "closed" in str(outcome[0])
+
+
+def test_a_blocking_client_can_be_closed_twice_and_a_refused_configuration_leaks_no_thread():
+    from ai_rag_info import RagClient
+
+    def bridges() -> int:
+        return sum(1 for t in threading.enumerate() if t.name.startswith("ai-rag-info-"))
+
+    before = bridges()
+    with pytest.raises(ValueError, match="max_retries"):
+        RagClient("http://rag.test", max_retries=-1)
+    assert bridges() == before, "a constructor that raised left its background loop running"
+
+    client = RagClient("http://rag.test")
+    assert bridges() == before + 1
+    client.close()
+    client.close()  # idempotent
+    assert bridges() == before
+    with pytest.raises(UsageError, match="closed"):
+        client.models()
+
+
 # --- stability tiers and deprecation -----------------------------------------------------------------------------
 def test_deprecation_warns_with_metadata_and_points_at_the_caller():
     @deprecated(since="2.1", remove_in="3.0", alternative="new_thing()")
@@ -321,3 +364,47 @@ def test_experimental_marks_and_registers_names():
     from ai_rag_info.embedded import AsyncRag, Rag
 
     assert AsyncRag.evaluate.__rag_experimental__ and Rag.evaluate.__rag_experimental__  # type: ignore[attr-defined]
+
+
+def test_a_deprecation_escalates_to_the_loud_warning_from_the_version_the_author_names(monkeypatch):
+    from ai_rag_info import _compat
+
+    @deprecated(since="2.1", remove_in="3.0", alternative="g", escalate_in="2.5")
+    def f() -> None: ...
+
+    monkeypatch.setattr(_compat, "__version__", "2.4.9")
+    with pytest.warns(RagDeprecationWarning) as quiet:
+        f()
+    assert not any(issubclass(w.category, RagFutureWarning) for w in quiet)
+
+    monkeypatch.setattr(_compat, "__version__", "2.5.0")
+    with pytest.warns(RagFutureWarning, match="removed in 3.0"):
+        f()
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"since": "2.1", "remove_in": "3.1", "alternative": "x"},  # removal in a minor of the next major
+        {"since": "2.1", "remove_in": "3.0.1", "alternative": "x"},
+        {"since": "2.1", "remove_in": "2.0", "alternative": "x"},  # not a later major
+        {"since": "2.1", "remove_in": "3.0", "alternative": "x", "escalate_in": "3.0"},  # at/after removal
+        {"since": "2.1", "remove_in": "3.0", "alternative": "x", "escalate_in": "2.0"},  # before `since`
+    ],
+)
+def test_the_deprecation_policy_is_checked_when_the_decorator_is_written(kwargs):
+    with pytest.raises(ValueError, match="deprecated"):
+        deprecated(**kwargs)
+
+
+# --- uploads -------------------------------------------------------------------------------------------------------------
+def test_a_stream_positioned_mid_file_uploads_the_same_bytes_on_every_transport():
+    stream = io.BytesIO(b"HEADERbody of the file")
+    stream.seek(6)
+    upload, owned = open_upload(stream, "doc.txt")
+    assert upload.filename == "doc.txt" and owned is True
+    assert upload.stream.read() == b"body of the file", "the engine reads from the position the caller left"
+
+    fresh = io.BytesIO(b"whole file")
+    upload, owned = open_upload(fresh, "doc.txt")
+    assert upload.stream is fresh and owned is False, "a stream at its start is passed through untouched"

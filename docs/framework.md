@@ -153,8 +153,13 @@ resolves, is documented and is in the snapshot.
   People upgrade slowly; when in doubt the window is longer.
 * **Every deprecation carries metadata** - the version it was deprecated in, the version it will be removed in,
   the replacement (or the reason there is none) - through one decorator, `ai_rag_info.deprecated(...)`. It
-  raises `RagDeprecationWarning` (a `DeprecationWarning` subclass) with a correct `stacklevel`; in the last
-  minor before removal it escalates to `RagFutureWarning` so it is visible outside `__main__`.
+  raises `RagDeprecationWarning` (a `DeprecationWarning` subclass) with a correct `stacklevel`. The author sets
+  `escalate_in` to the last minor before removal; from that version on it warns with `RagFutureWarning`, which
+  is visible outside `__main__`.
+* **What the decorator can and cannot check.** It refuses malformed versions, removal anywhere but a later
+  *major* release, and an `escalate_in` outside `[since, remove_in)`. The two-minor-release *floor* cannot be
+  derived from version numbers alone (it depends on what is released in between), so it is a review rule, and
+  `escalate_in` is something the author must remember to set; neither is machine-enforced.
 * **The wire contract has its own window:** a deprecated endpoint or field is announced in the OpenAPI document
   (`deprecated: true`) and the release notes for at least two minors before `/api/v2` drops it.
 * The test suite runs with `-W error::ai_rag_info.RagDeprecationWarning`: nothing in this repo may use a name

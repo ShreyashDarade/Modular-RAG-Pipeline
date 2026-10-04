@@ -143,12 +143,12 @@ async def test_connection_failures_retry_then_become_a_typed_error(no_sleeping):
     assert len(attempts) == 3 and isinstance(caught.value.__cause__, httpx.ConnectError)
 
 
-async def test_a_read_timeout_is_retried_for_reads_but_not_for_a_chat_turn():
+async def test_a_connection_reset_is_retried_for_reads_but_not_for_a_chat_turn():
     reads, chats = [], []
 
     def handler(request: httpx.Request) -> httpx.Response:
         (chats if request.url.path.endswith("/chat") else reads).append(1)
-        raise httpx.ReadTimeout("slow", request=request)
+        raise httpx.ReadError("connection reset", request=request)
 
     with pytest.raises(ConnectionFailedError):
         await client(handler, retries=2).retrieve("q")
@@ -409,3 +409,185 @@ def test_sse_parsing_follows_the_spec():
     )
     assert parse("\n\n\n") == [], "blank lines alone are not events"
     assert parse("event: a\ndata: tail without blank line") == [("a", "tail without blank line")]
+
+
+# --- regressions from the independent review ---------------------------------------------------------------------
+async def test_sse_lines_are_split_only_on_the_characters_the_spec_names():
+    """U+2028 / U+2029 / U+0085 are legal raw inside a JSON string and str.splitlines() treats them as line
+    breaks: aiter_lines() cut the event in half and the SDK reported a malformed event."""
+    text = "page one page two page three\x85end"
+    body = (
+        'event: start\ndata: {"conversation_id":"c1","standalone_query":"q","expanded_queries":["q"],"model":"m","context":[]}\n\n'
+        f"event: delta\ndata: {json.dumps({'text': text}, ensure_ascii=False)}\n\n"
+        f"event: end\ndata: {json.dumps({'answer': text}, ensure_ascii=False)}\n\n"
+    ).encode()
+    events = await collect(client(lambda request: httpx.Response(200, content=body)))
+    assert events[1].text == text and events[-1].answer == text
+
+
+async def test_crlf_and_a_cr_split_across_chunks_are_handled():
+    body = b'event: start\r\ndata: {"conversation_id":"c","standalone_query":"q","expanded_queries":[],"model":"m","context":[]}\r\n\r\nevent: end\rdata: {"answer":"a"}\r\r'
+
+    class OneByte(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            for i in range(len(body)):
+                yield body[i : i + 1]
+
+    events = await collect(client(lambda request: httpx.Response(200, stream=OneByte())))
+    assert [type(e).__name__ for e in events] == ["ChatStartEvent", "ChatEndEvent"]
+
+
+def test_the_server_escapes_the_characters_that_break_line_based_clients():
+    from src.api.routes.chat import _sse
+
+    frame = _sse("delta", {"text": "a b c\x85d"}).decode()
+    assert " " not in frame and " " not in frame and "\x85" not in frame
+    assert json.loads(frame.split("data: ", 1)[1])["text"] == "a b c\x85d", "same JSON, different spelling"
+    assert len(frame.splitlines()) == 3, "event, data, and the blank terminator - nothing split in the middle"
+
+
+async def test_ids_are_percent_encoded_so_they_cannot_rewrite_the_request_path():
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(404, json={"detail": "nope", "code": "not_found"})
+
+    evil = "../documents?source=/important.pdf&collection=prod#"
+    c = client(handler)
+    for call in (c.chat.get(evil), c.chat.delete(evil), c.jobs.get(evil)):
+        with pytest.raises(NotFoundError):
+            await call
+    assert len(seen) == 3
+    for request in seen:
+        raw = request.url.raw_path.decode()
+        prefix = "/api/v1/jobs/" if "/jobs/" in raw else "/api/v1/chat/"
+        assert raw.startswith(prefix), raw
+        tail = raw[len(prefix) :]
+        # the id is one path segment: no raw '/', '?', '&' or '#' survived to rewrite the request
+        assert tail and not any(ch in tail for ch in "/?&#"), raw
+        assert "%2F" in tail and "%3F" in tail, raw
+
+
+async def test_a_retried_delete_whose_first_attempt_succeeded_is_not_reported_as_not_found(no_sleeping):
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        if len(calls) == 1:
+            raise httpx.ReadError("connection reset after the server deleted it", request=request)
+        return httpx.Response(404, json={"detail": "conversation not found", "code": "not_found"})
+
+    await client(handler).chat.delete("c1")  # no error: the conversation is gone, which is what was asked
+    assert len(calls) == 2
+
+    calls.clear()
+
+    def really_missing(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return httpx.Response(404, json={"detail": "conversation not found", "code": "not_found"})
+
+    with pytest.raises(NotFoundError):
+        await client(really_missing).chat.delete("c1")  # a first-attempt 404 is a real 404
+    assert calls == [1]
+
+
+async def test_a_read_timeout_is_the_same_typed_error_as_in_process_and_is_never_retried(no_sleeping):
+    from ai_rag_info.errors import RequestTimeoutError
+
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        raise httpx.ReadTimeout("slow", request=request)
+
+    for call in (
+        lambda c: c.ask("q"),
+        lambda c: c.retrieve("q"),
+        lambda c: c.documents.ingest(b"x", filename="a.txt"),
+        lambda c: c.chat.send("hi"),
+    ):
+        calls.clear()
+        with pytest.raises(RequestTimeoutError) as caught:
+            await call(client(handler, retries=3))
+        assert calls == [1] and caught.value.code == "timeout", (
+            "retrying would repeat an LLM call or an upload"
+        )
+
+
+async def test_opening_a_stream_retries_a_refusal_before_any_work_but_not_a_gateway_error(no_sleeping):
+    calls = []
+    body = sse(("start", START), ("end", {"answer": "a"}))
+
+    def busy_then_ok(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        if len(calls) < 3:
+            return httpx.Response(
+                503, json={"detail": "busy", "code": "overloaded"}, headers={"Retry-After": "2"}
+            )
+        return httpx.Response(200, content=body)
+
+    assert (
+        len(await collect(client(busy_then_ok, retries=3))) == 2
+        and len(calls) == 3
+        and no_sleeping == [2.0, 2.0]
+    )
+
+    calls.clear()
+
+    def gateway(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return httpx.Response(502, json={"detail": "x", "code": "upstream_error"})
+
+    with pytest.raises(UpstreamError):
+        await collect(client(gateway, retries=3))
+    assert calls == [1], "a turn that may have started is not re-sent"
+
+    def refused(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused", request=request)
+
+    with pytest.raises(ConnectionFailedError):
+        await collect(client(refused, retries=1))
+
+
+async def test_a_stream_error_event_carries_the_request_id():
+    body = sse(("start", START), ("error", {"detail": "boom", "code": "timeout"}))
+    handler = lambda request: httpx.Response(200, content=body, headers={"x-request-id": "req-9"})  # noqa: E731
+    with pytest.raises(RagError) as caught:
+        await collect(client(handler))
+    assert caught.value.request_id == "req-9"
+
+
+async def test_a_stream_like_object_with_only_read_can_be_uploaded_once():
+    class ReadOnly:
+        name = "only-read.txt"
+
+        def __init__(self):
+            self.data = io.BytesIO(b"hello")
+
+        def read(self, n=-1):
+            return self.data.read(n)
+
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.content)
+        return httpx.Response(200, json=INGEST_OK)
+
+    assert (await client(handler).documents.ingest(ReadOnly())).status == "succeeded"  # type: ignore[arg-type]
+    assert b"hello" in seen[0]
+
+
+def test_http_client_settings_cannot_be_silently_ignored():
+    with pytest.raises(ValueError, match="configure that client instead"):
+        AsyncRagClient("http://x", http_client=httpx.AsyncClient(), api_key="k")
+    with pytest.raises(ValueError, match="configure that client instead"):
+        AsyncRagClient("http://x", http_client=httpx.AsyncClient(), timeout=5)
+    AsyncRagClient("http://x", http_client=httpx.AsyncClient())  # fine without settings
+
+
+def test_the_default_client_timeout_outlasts_the_servers_request_deadline():
+    from ai_rag_info.client import DEFAULT_TIMEOUT
+    from src.core.config import Settings
+
+    assert DEFAULT_TIMEOUT > Settings(_env_file=None).request_timeout_seconds

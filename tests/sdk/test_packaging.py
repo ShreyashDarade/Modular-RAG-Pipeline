@@ -60,8 +60,12 @@ print(json.dumps({
     "engine_installed": [m for m in __LIBS__ if importlib.util.find_spec(m) is not None],
     "rag_hint": None,
 }))
+import ai_rag_info
+print("EXPORTS=" + json.dumps({"engine": ai_rag_info.ENGINE_AVAILABLE, "all": ai_rag_info.__all__}))
+ns = {}
+exec("from ai_rag_info import *", ns)  # must work on a thin install: __all__ names only what is importable
 try:
-    import ai_rag_info; ai_rag_info.Rag
+    ai_rag_info.Rag
 except ImportError as exc:
     print("HINT=" + str(exc))
 """.replace("__LIBS__", repr(ENGINE_LIBS))
@@ -94,6 +98,12 @@ def test_a_bare_install_is_a_working_thin_client(tmp_path: Path):
     report = json.loads(out[0])
     assert report["result"] == ["q", "NotFoundError", "not_found", "r-1"]
     assert report["engine_imported"] == [] and report["engine_installed"] == []
+    exports = json.loads(next(line for line in out if line.startswith("EXPORTS=")).removeprefix("EXPORTS="))
+    assert exports["engine"] is False
+    assert not {"Rag", "AsyncRag", "EvalReport"} & set(exports["all"]), (
+        "`import *` would raise on a thin install"
+    )
+    assert {"RagClient", "AsyncRagClient", "ENGINE_AVAILABLE"} <= set(exports["all"])
     hint = next(line for line in out if line.startswith("HINT="))
     assert "pip install 'ai-rag-info[engine]'" in hint
 

@@ -4,7 +4,7 @@ Measured with [`scripts/benchmark.py`](../scripts/benchmark.py). Read the **limi
 number here to size a deployment.
 
 ```bash
-pip install -e '.[dev]'                      # psutil is a dev dependency
+pip install -e '.[api,dev]'                  # psutil is a dev dependency
 python scripts/benchmark.py --docs 150 --duration 8 --loadgen-processes 3 --json results.json
 python scripts/benchmark.py --docs 120 --concurrency 16 --skip-warm --no-expansion --fuzziness 0
 ```

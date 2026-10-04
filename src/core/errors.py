@@ -170,12 +170,13 @@ def _walk(cls: type[RagError]) -> list[type[RagError]]:
 
 
 def error_catalog() -> dict[str, type[RagError]]:
-    """``code -> class`` for every error defined here. Codes are unique; a duplicate is a bug."""
+    """``code -> class``. A class is indexed under the code it *defines*; a subclass that merely inherits its
+    parent's code (a plug-in's ``class MyNotFound(NotFoundError)``) does not take the code over, so the parent
+    keeps it and the error mapping never breaks. Built-in codes are unique (checked by the test suite)."""
     catalog: dict[str, type[RagError]] = {}
     for cls in _walk(RagError):
-        if cls.code in catalog and catalog[cls.code] is not cls:
-            raise RuntimeError(f"error code '{cls.code}' is used by both {catalog[cls.code]} and {cls}")
-        catalog[cls.code] = cls
+        if "code" in vars(cls):
+            catalog.setdefault(cls.code, cls)
     return catalog
 
 

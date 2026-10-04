@@ -66,7 +66,8 @@ jobs:
         with:
           python-version: "3.13"
       - run: pip install uv pytest pytest-asyncio httpx pydantic
-      - run: pytest tests/sdk/test_packaging.py -q -m packaging
+      # --noconftest: the shared conftest imports the engine's test fixtures, which this job does not install
+      - run: pytest tests/sdk/test_packaging.py -q -m packaging --noconftest -p no:cacheprovider
 
   unit:
     name: Unit tests (Python ${{ matrix.python }})

@@ -14,9 +14,10 @@ from ai_rag_info._http import HttpBackend
 from ai_rag_info._sync import RagAPI, bridge_for
 from ai_rag_info._version import __version__
 
-#: Longer than the server's own request deadline (60 s by default), so a slow request ends with the server's
-#: typed ``timeout`` error rather than a client-side transport timeout.
-DEFAULT_TIMEOUT = 90.0
+#: Longer than the server's own request deadline (REQUEST_TIMEOUT_SECONDS, 120 by default; an ingest that waits
+#: for its job can use almost all of it), so a slow request ends with the server's typed ``timeout`` error rather
+#: than a client-side one. Lower it - or the server's - if you want to fail faster.
+DEFAULT_TIMEOUT = 150.0
 DEFAULT_MAX_RETRIES = 2
 
 
@@ -60,6 +61,11 @@ class AsyncRagClient(AsyncRagAPI):
     ) -> None:
         if max_retries < 0:
             raise ValueError("max_retries must be >= 0")
+        if http_client is not None and (api_key or headers or auth or timeout != DEFAULT_TIMEOUT):
+            raise ValueError(
+                "api_key, headers, auth and timeout configure the client this SDK builds; "
+                "with http_client=... configure that client instead"
+            )
         client = http_client or _build_http_client(base_url, api_key, headers, auth, timeout, None)
         super().__init__(
             HttpBackend(client, base_url, max_retries=max_retries, owns_client=http_client is None)
@@ -95,7 +101,12 @@ class RagClient(RagAPI):
                 max_retries=max_retries,
             )
 
-        super().__init__(bridge.run(make()), bridge)
+        try:
+            api = bridge.run(make())
+        except BaseException:
+            bridge.close()  # a refused configuration must not leave a background thread behind
+            raise
+        super().__init__(api, bridge)
 
 
 __all__ = ["AsyncRagClient", "RagClient"]

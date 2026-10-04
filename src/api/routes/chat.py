@@ -22,8 +22,18 @@ router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 _EVENT_NAME = {cls: name for name, cls in STREAM_EVENT_NAMES.items()}
 
 
+#: Legal raw inside a JSON string, but `str.splitlines()` (and so many SSE clients) treats them as line breaks.
+_LINE_BREAKS = {"\x85": "\\u0085", "\u2028": "\\u2028", "\u2029": "\\u2029"}
+
+
 def _sse(event: str, data: dict[str, Any]) -> bytes:
-    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n".encode()
+    body = json.dumps(data, ensure_ascii=False)
+    for (
+        char,
+        escaped,
+    ) in _LINE_BREAKS.items():  # the same JSON, spelled so no client can mistake it for a line end
+        body = body.replace(char, escaped)
+    return f"event: {event}\ndata: {body}\n\n".encode()
 
 
 def _encode(event: ChatStreamEvent) -> bytes:
