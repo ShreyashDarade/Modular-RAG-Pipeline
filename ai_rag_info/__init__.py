@@ -18,9 +18,11 @@ change, is in ``docs/framework.md``; everything outside this package is internal
 
 from __future__ import annotations
 
+import importlib.util
 from typing import TYPE_CHECKING, Any
 
 from ai_rag_info._compat import (
+    ENGINE_MODULES,
     EXPERIMENTAL,
     RagDeprecationWarning,
     RagFutureWarning,
@@ -60,13 +62,16 @@ def __getattr__(name: str) -> Any:
     return value
 
 
+#: Whether the in-process engine is installed (``pip install 'ai-rag-info[engine]'``). On a thin install
+#: ``Rag`` / ``AsyncRag`` / ``EvalReport`` are not exported (so ``import *`` works) and asking for them is an
+#: ``ImportError`` that names the extra.
+ENGINE_AVAILABLE = all(importlib.util.find_spec(m) is not None for m in ENGINE_MODULES)
+
 __all__ = [
+    "ENGINE_AVAILABLE",
     "EXPERIMENTAL",
-    "AsyncRag",
     "AsyncRagAPI",
     "AsyncRagClient",
-    "EvalReport",
-    "Rag",
     "RagAPI",
     "RagClient",
     "RagDeprecationWarning",
@@ -75,3 +80,6 @@ __all__ = [
     "deprecated",
     "experimental",
 ]
+if ENGINE_AVAILABLE:
+    __all__ += ["AsyncRag", "EvalReport", "Rag"]
+    __all__.sort()

@@ -87,8 +87,10 @@ async def check_chat_model(chat: ChatModel) -> None:
     messages = [ChatMessage("system", "Answer briefly."), ChatMessage("user", "Say hello.")]
     answer = await chat.complete(messages)
     _require(isinstance(answer, str), f"complete() must return str, got {type(answer).__name__}")
+    _require(answer.strip(), "complete() returned an empty answer: a failure must raise, not come back empty")
     chunks = [chunk async for chunk in chat.stream(messages)]
     _require(all(isinstance(c, str) for c in chunks), "stream() must yield str chunks")
+    _require("".join(chunks).strip(), "stream() produced no text: a failure must raise, not come back empty")
 
 
 def _candidates(texts: Sequence[str]) -> list[RetrievedDocument]:

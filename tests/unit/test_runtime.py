@@ -3,11 +3,11 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from src.core.errors import InvalidRequestError, UpstreamError
+from src.core.errors import InvalidRequestError, RequestTimeoutError, UpstreamError
 from src.runtime import cache as cache_module
 from src.runtime import ratelimit as ratelimit_module
 from src.runtime.cache import CachedCall, CorpusVersion, MemoryCache, TieredCache
-from src.runtime.concurrency import Bulkhead, SingleFlight, run_all
+from src.runtime.concurrency import Bulkhead, SingleFlight, deadline_iter, run_all
 from src.runtime.ratelimit import MemoryRateLimiter
 
 
@@ -190,3 +190,48 @@ async def test_memory_rate_limiter_counts_per_key_and_window(monkeypatch):
     assert (await limiter.hit("client-2", 3, 60)).allowed, "keys are independent"
     now[0] += 61
     assert (await limiter.hit("client-1", 3, 60)).allowed, "a new window starts fresh"
+
+
+# --- deadline_iter: only time spent waiting on the source counts -----------------------------------------------------
+async def test_a_consumer_that_pauses_between_items_does_not_eat_the_deadline():
+    async def source():
+        for i in range(3):
+            await asyncio.sleep(0.01)
+            yield i
+
+    seen = []
+    async for item in deadline_iter(source(), 0.15):
+        seen.append(item)
+        await asyncio.sleep(0.12)  # a slow consumer: 3 x 0.12s is well past the 0.15s budget
+    assert seen == [0, 1, 2]
+
+
+async def test_a_source_that_stalls_is_cut_off_with_the_typed_error_and_closed():
+    closed = []
+
+    async def source():
+        try:
+            yield 1
+            await asyncio.sleep(5)
+            yield 2
+        finally:
+            closed.append(True)
+
+    got = []
+    with pytest.raises(RequestTimeoutError, match="0.1s"):
+        async for item in deadline_iter(source(), 0.1):
+            got.append(item)
+    assert got == [1] and closed == [True]
+
+
+async def test_waiting_time_accumulates_across_items():
+    async def source():
+        for i in range(10):
+            await asyncio.sleep(0.03)
+            yield i
+
+    got = []
+    with pytest.raises(RequestTimeoutError):
+        async for item in deadline_iter(source(), 0.1):
+            got.append(item)
+    assert 1 <= len(got) < 10

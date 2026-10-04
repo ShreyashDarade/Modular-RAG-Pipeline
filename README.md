@@ -257,11 +257,15 @@ async with await AsyncRag.create() as rag:            # configuration: env / .en
   client has no such attribute rather than a method that fails at run time.
 * **Async is the implementation; sync is a bridge** over one background event loop. A blocking call from inside
   a running event loop is a `UsageError`, not a silent stall.
-* **Retries are conservative.** Connection failures and 429/503 are retried for every call (the server refused
-  before doing work); 408/502/504 only for idempotent calls (reads, and ingestion, which is idempotent by content
-  checksum) - a chat turn is never re-sent after a gateway error, because it may already have been recorded.
-  `Retry-After` is honoured. Responses are validated strictly (a malformed one is a `ResponseError`) but unknown
-  fields are ignored, so a newer server never breaks an older SDK.
+* **Retries are conservative.** Failures where the request never left (connect errors, pool timeouts) and
+  429/503 (the server refused before doing work) are retried for every call; 408/502/504 and connection resets
+  only for idempotent calls (reads, deletes, and ingestion, which is idempotent by content checksum) - a chat
+  turn is never re-sent after an ambiguous failure, because it may already have been recorded. A *read timeout*
+  is never retried: the server may still be working, so it surfaces as `RequestTimeoutError`, as it does
+  in-process. Opening a chat stream retries only a refusal before any work. `Retry-After` is honoured. Responses
+  are validated strictly (a malformed one is a `ResponseError`) but unknown fields are ignored, so a newer
+  server never breaks an older SDK. The default client timeout (150 s) is longer than the server's own request
+  deadline (120 s), so a slow request ends with the server's typed error; lower either to fail faster.
 * **Extending** uses the same package: `ai_rag_info.extend` has the port protocols a plug-in implements, and
   `ai_rag_info.testing` has `check_embedder`, `check_reranker`, `check_parser`, ... - the conformance checks the
   built-in components pass in CI - so a plug-in can prove it honours the contract.

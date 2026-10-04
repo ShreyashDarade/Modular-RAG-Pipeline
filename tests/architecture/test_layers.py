@@ -83,3 +83,83 @@ def test_the_thin_client_set_is_what_the_client_actually_imports():
     assert imported - {"ai_rag_info"} <= _thin_units(), (
         f"unlisted thin-client modules: {imported - _thin_units()}"
     )
+
+
+# --- exhaustive checks: they look at EVERY module, so a package added later cannot slip past the static lists ----
+def _graph():
+    import grimp
+
+    return grimp.build_graph("src", "ai_rag_info", include_external_packages=True)
+
+
+def _in(module: str, units: list[str]) -> bool:
+    return any(module == u or module.startswith(u + ".") for u in units)
+
+
+def test_every_heavy_third_party_library_is_imported_only_where_it_is_confined():
+    """The Import Linter contracts name the modules they police; this iterates all of them."""
+    confinement = tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]["architecture"]["confinement"]
+    graph = _graph()
+    leaks = []
+    for module in sorted(graph.modules):
+        if not module.startswith(("src.", "ai_rag_info.")) and module not in ("src", "ai_rag_info"):
+            continue
+        for imported in graph.find_modules_directly_imported_by(module):
+            top = imported.split(".")[0]
+            if top in confinement and not _in(module, confinement[top]):
+                leaks.append(f"{module} imports {top} (allowed only in {', '.join(confinement[top])})")
+    assert not leaks, "third-party confinement broken:\n  " + "\n  ".join(leaks)
+
+
+def test_the_confinement_table_and_the_import_linter_contracts_name_the_same_libraries():
+    confinement = tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]["architecture"]["confinement"]
+    in_contracts = {
+        c["forbidden_modules"][0]
+        for c in CONFIG["contracts"]
+        if c["type"] == "forbidden"
+        and len(c["forbidden_modules"]) == 1
+        and c["name"].endswith(tuple(", ".join(v) for v in confinement.values()))
+    }
+    assert set(confinement) == in_contracts, "pyproject's confinement table and its contracts drifted apart"
+
+
+def test_everything_the_thin_client_can_reach_imports_only_the_standard_library_httpx_and_pydantic():
+    """Closes the hole in a forbidden-list contract: a library nobody thought to list."""
+    import sys
+
+    graph = _graph()
+    seen: set[str] = set()
+    frontier = ["ai_rag_info.client", "ai_rag_info.errors", "ai_rag_info.models"]
+    external: dict[str, str] = {}
+    while frontier:
+        module = frontier.pop()
+        if module in seen:
+            continue
+        seen.add(module)
+        for imported in graph.find_modules_directly_imported_by(module):
+            top = imported.split(".")[0]
+            if top in ("src", "ai_rag_info"):
+                frontier.append(imported)
+            elif top not in sys.stdlib_module_names and top != "__future__":
+                external.setdefault(top, module)
+    unexpected = {lib: where for lib, where in external.items() if lib not in {"httpx", "pydantic"}}
+    assert not unexpected, (
+        f"the thin client reaches third-party libraries beyond httpx and pydantic: {unexpected}"
+    )
+    assert not any(m.startswith(("src.application", "src.core.container", "src.indexing")) for m in seen)
+
+
+def test_the_package_root_does_not_import_the_engine_at_import_time():
+    """`ai_rag_info/__init__.py` is in no Import Linter contract (the package root contains the in-process engine)."""
+    import ast
+
+    tree = ast.parse((ROOT / "ai_rag_info" / "__init__.py").read_text())
+    eager = []
+    for node in tree.body:  # module level only: TYPE_CHECKING blocks and function bodies are not eager
+        if isinstance(node, ast.ImportFrom) and node.module:
+            eager.append(node.module)
+        elif isinstance(node, ast.Import):
+            eager += [alias.name for alias in node.names]
+    assert not [m for m in eager if m.startswith(("src", "ai_rag_info.embedded", "ai_rag_info.testing"))], (
+        eager
+    )

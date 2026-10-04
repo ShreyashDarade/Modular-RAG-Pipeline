@@ -172,6 +172,31 @@ async def test_chat_model_and_expanders_conform():
         await check_query_expander(REGISTRIES.query_expanders.create(name, SETTINGS, chat, cache))
 
 
+async def test_the_chat_model_check_rejects_a_model_that_hides_failure_behind_an_empty_answer():
+    class Swallows:
+        model_id = "swallows"
+
+        async def complete(self, messages):
+            return ""
+
+        async def stream(self, messages):
+            yield "text"
+
+    class SilentStream:
+        model_id = "silent"
+
+        async def complete(self, messages):
+            return "hello"
+
+        async def stream(self, messages):
+            yield ""
+
+    with pytest.raises(ConformanceError, match="empty answer"):
+        await check_chat_model(Swallows())
+    with pytest.raises(ConformanceError, match="no text"):
+        await check_chat_model(SilentStream())
+
+
 async def test_the_expander_check_rejects_expanders_that_lose_the_original_query():
     class Rewrites:
         async def expand(self, query):

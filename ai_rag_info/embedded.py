@@ -15,8 +15,9 @@ from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-_ENGINE = ("elasticsearch", "pydantic_settings", "redis", "langchain_core", "prometheus_client")
-if missing := [m for m in _ENGINE if importlib.util.find_spec(m) is None]:
+from ai_rag_info._compat import ENGINE_MODULES
+
+if missing := [m for m in ENGINE_MODULES if importlib.util.find_spec(m) is None]:
     raise ImportError(
         f"ai_rag_info.embedded needs the engine ({', '.join(missing)} not installed): "
         "pip install 'ai-rag-info[engine]'"

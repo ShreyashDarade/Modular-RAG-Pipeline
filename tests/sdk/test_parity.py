@@ -51,6 +51,19 @@ async def test_ingest_accepts_bytes_and_streams_and_needs_a_filename_for_them(ra
         await rag.documents.ingest("/no/such/file.txt")
 
 
+async def test_a_stream_positioned_mid_file_is_ingested_from_where_it_stands_on_both_transports(
+    rag: AsyncRagAPI,
+):
+    head = "MARKER-HEADER " * 40 + "\n"
+    stream = io.BytesIO((head + TEXT).encode())
+    stream.seek(len(head.encode()))
+    response = await rag.documents.ingest(stream, filename="midway.txt")
+    assert response.status == "succeeded"
+    found = await rag.retrieve("twelve")
+    texts = " ".join(d.content for d in found.documents)
+    assert "MARKER-HEADER" not in texts, "bytes before the stream position were uploaded by one transport"
+
+
 async def test_ingest_into_a_named_collection_and_kind_selection(rag: AsyncRagAPI, report: Path):
     response = await rag.documents.ingest(report, collection="beta", kinds=["text"])
     assert response.collection == "beta" and response.text_chunks >= 1 and response.image_chunks == 0

@@ -81,24 +81,28 @@ async def deadline(seconds: float) -> AsyncIterator[None]:
 
 
 async def deadline_iter[T](source: AsyncIterator[T], seconds: float) -> AsyncIterator[T]:
-    """Yield from ``source`` but give the *whole* iteration ``seconds`` (a ``RequestTimeoutError`` beyond that).
+    """Yield from ``source``, allowing it ``seconds`` in total (a ``RequestTimeoutError`` beyond that).
 
-    Unlike wrapping the loop in :func:`deadline`, each pull is bounded on its own, so the iterator may be
-    consumed from a different task than the one that created it (as a streaming HTTP response does).
+    Only the time spent *waiting for the source* counts: a consumer that pauses between items - a slow HTTP
+    client, an application doing work per event - does not eat the budget, and a stalled source is still cut
+    off. Each pull is bounded on its own, so the iterator may be consumed from a different task than the one
+    that created it (as a streaming HTTP response does).
     """
     loop = asyncio.get_running_loop()
-    end = loop.time() + seconds
+    spent = 0.0
     try:
         while True:
-            remaining = end - loop.time()
+            remaining = seconds - spent
             if remaining <= 0:
                 raise RequestTimeoutError(f"request did not finish within {seconds:g}s")
+            started = loop.time()
             try:
                 item = await asyncio.wait_for(anext(source), remaining)
             except StopAsyncIteration:
                 return
             except TimeoutError:
                 raise RequestTimeoutError(f"request did not finish within {seconds:g}s") from None
+            spent += loop.time() - started
             yield item
     finally:
         aclose = getattr(source, "aclose", None)

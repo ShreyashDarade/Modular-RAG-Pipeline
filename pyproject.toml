@@ -97,6 +97,32 @@ include = ["src*", "ai_rag_info*"]
 [tool.setuptools.package-data]
 ai_rag_info = ["py.typed"]
 
+# Where each heavy third-party library may be imported (docs/framework.md, section 2). The Import Linter contracts
+# below enforce it for the modules they list; tests/architecture/test_layers.py enforces it for EVERY module,
+# so a package added later cannot quietly import elasticsearch.
+[tool.architecture.confinement]
+cv2 = ["src.parsing"]
+docx = ["src.parsing"]
+easyocr = ["src.parsing"]
+elasticsearch = ["src.indexing"]
+fastapi = ["src.api", "src.mcp_server"]
+langchain_core = ["src.models"]
+langchain_openai = ["src.models"]
+langchain_text_splitters = ["src.chunking"]
+mcp = ["src.mcp_server"]
+numpy = ["src.parsing"]
+openpyxl = ["src.parsing"]
+prometheus_client = ["src.api", "src.runtime", "src.worker"]
+pydantic_settings = ["src.core.config"]
+pymupdf = ["src.parsing"]
+redis = ["src.chat", "src.jobs", "src.runtime"]
+sklearn = ["src.chunking"]
+starlette = ["src.api"]
+torch = ["src.parsing"]
+typer = ["src.cli"]
+uvicorn = ["src.api"]
+watchdog = ["src.ingestion"]
+
 # --- Architecture contracts (docs/framework.md, section 2; docs/adr/0002) ----------------------------------
 # Run with `lint-imports`; enforced in CI and by tests/architecture/. Type-checking-only imports create no
 # runtime coupling and are not counted.
@@ -1150,6 +1176,13 @@ forbidden_modules = [
     "transformers",
     "pandas",
     "PIL",
+    "langdetect",
+    "tabulate",
+    "langchain_anthropic",
+    "langchain_google_genai",
+    "langchain_ollama",
+    "multipart",
+    "python_multipart",
 ]
 
 
@@ -1193,6 +1226,30 @@ forbidden_modules = [
     "httpx",
 ]
 
+
+[[tool.importlinter.contracts]]
+name = "HTTP routes translate: they reach the pipeline only through src.api.deps (-> RagService)"
+type = "forbidden"
+source_modules = ["src.api.routes"]
+forbidden_modules = [
+    "src.application",
+    "src.chat",
+    "src.chunking",
+    "src.core.bootstrap",
+    "src.core.config",
+    "src.core.container",
+    "src.core.registry",
+    "src.evaluation",
+    "src.indexing",
+    "src.ingestion",
+    "src.jobs",
+    "src.models",
+    "src.parsing",
+    "src.ports",
+    "src.retrieval",
+    "src.runtime",
+]
+allow_indirect_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -15,6 +15,7 @@ class ai_rag_info.AsyncRagAPI()
   resource jobs: AsyncJobs
   resource collections: AsyncCollections
 class ai_rag_info.AsyncRagClient(AsyncRagAPI)
+ENGINE_AVAILABLE: bool
 EXPERIMENTAL: set
 class ai_rag_info.EvalReport()
   def __init__(self, name: 'str', meta: 'dict[str, Any]', metrics: 'dict[str, Interval]', by_tag: 'dict[str, dict[str, tuple[float, int]]]', latency_ms: 'dict[str, float]', errors: 'int', cases: 'list[dict[str, Any]]') -> None
@@ -39,7 +40,7 @@ class ai_rag_info.RagClient(RagAPI)
 class ai_rag_info.RagDeprecationWarning(DeprecationWarning)
 class ai_rag_info.RagFutureWarning(FutureWarning)
 __version__: str
-def ai_rag_info.deprecated(*, since: 'str', remove_in: 'str', alternative: 'str | None' = None, reason: 'str | None' = None) -> 'Callable[[F], F]'
+def ai_rag_info.deprecated(*, since: 'str', remove_in: 'str', alternative: 'str | None' = None, reason: 'str | None' = None, escalate_in: 'str | None' = None) -> 'Callable[[F], F]'
 def ai_rag_info.experimental(obj: 'T') -> 'T'
 
 ## resources (reached as rag.documents, rag.chat, rag.jobs, rag.collections)

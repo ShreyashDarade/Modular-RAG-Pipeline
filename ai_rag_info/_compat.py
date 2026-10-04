@@ -15,11 +15,17 @@ import warnings
 from collections.abc import Callable
 from typing import Any, TypeVar, cast
 
+from ai_rag_info._version import __version__
+
 F = TypeVar("F", bound=Callable[..., Any])
 
 _VERSION = re.compile(r"^\d+\.\d+(\.\d+)?$")
 
-#: Qualified names of every ``@experimental`` object, filled as modules import.
+#: Modules that must be importable for the in-process engine (``ai_rag_info.embedded``) to work.
+ENGINE_MODULES = ("elasticsearch", "pydantic_settings", "redis", "langchain_core", "prometheus_client")
+
+#: Qualified names of every ``@experimental`` object. Filled as the modules that define them are imported:
+#: ``ai_rag_info.embedded`` and ``ai_rag_info.testing`` are loaded on first use, so it is empty until then.
 EXPERIMENTAL: set[str] = set()
 
 
@@ -53,24 +59,45 @@ def _check_version(label: str, value: str) -> None:
         raise ValueError(f"deprecated(): {label}={value!r} is not a version like '2.3' or '2.3.0'")
 
 
+def _as_tuple(version: str) -> tuple[int, int, int]:
+    parts = [int(x) for x in re.findall(r"\d+", version)[:3]]
+    return (*parts, *([0] * (3 - len(parts))))  # type: ignore[return-value]
+
+
 def deprecated(
-    *, since: str, remove_in: str, alternative: str | None = None, reason: str | None = None
+    *,
+    since: str,
+    remove_in: str,
+    alternative: str | None = None,
+    reason: str | None = None,
+    escalate_in: str | None = None,
 ) -> Callable[[F], F]:
     """Deprecate a public function or method.
 
-    ``since`` and ``remove_in`` are versions; ``alternative`` names the replacement - or give ``reason``
-    when there is none. The window between them must respect the policy (at least two minor releases and
-    removal only in a major release); that is checked here, not left to reviewers.
+    ``since`` is the version that deprecates it, ``remove_in`` the major release that removes it
+    (``3.0``; removal only happens in a major release - checked here). ``alternative`` names the replacement,
+    or give ``reason`` when there is none. From ``escalate_in`` on - set it to the last minor release before
+    removal - the warning becomes :class:`RagFutureWarning`, which is shown to end users and not only to
+    developers. The floor of *two minor releases* between ``since`` and removal cannot be verified from
+    versions alone: that part stays a review rule (``docs/framework.md``, section 7).
     """
     _check_version("since", since)
     _check_version("remove_in", remove_in)
     if not (alternative or reason):
         raise ValueError("deprecated(): give the replacement (`alternative`) or the `reason` there is none")
-    since_major, since_minor = (int(x) for x in since.split(".")[:2])
-    remove_major, remove_minor = (int(x) for x in remove_in.split(".")[:2])
-    if remove_major <= since_major:
+    removal = _as_tuple(remove_in)
+    if removal[1] != 0 or removal[2] != 0:
+        raise ValueError(
+            f"deprecated(): remove_in={remove_in!r} must be a major release (like '3.0'): removal only happens in majors"
+        )
+    if removal[0] <= _as_tuple(since)[0]:
         raise ValueError(f"deprecated(): removal in {remove_in} is not a later major release than {since}")
-    del since_minor, remove_minor
+    if escalate_in is not None:
+        _check_version("escalate_in", escalate_in)
+        if not _as_tuple(since) <= _as_tuple(escalate_in) < removal:
+            raise ValueError(
+                "deprecated(): escalate_in must lie between `since` (inclusive) and `remove_in` (exclusive)"
+            )
 
     def decorate(func: F) -> F:
         message = f"{func.__qualname__} is deprecated since {since} and will be removed in {remove_in}. " + (
@@ -79,7 +106,8 @@ def deprecated(
 
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            warnings.warn(message, RagDeprecationWarning, stacklevel=2)
+            loud = escalate_in is not None and _as_tuple(__version__) >= _as_tuple(escalate_in)
+            warnings.warn(message, RagFutureWarning if loud else RagDeprecationWarning, stacklevel=2)
             return func(*args, **kwargs)
 
         wrapper.__rag_deprecated__ = {"since": since, "remove_in": remove_in}  # type: ignore[attr-defined]
